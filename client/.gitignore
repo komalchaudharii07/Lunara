@@ -7,8 +7,12 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
+<<<<<<< HEAD
 node_modules/
 .env
+=======
+node_modules
+>>>>>>> aa9d6a7 (Initial commit)
 dist
 dist-ssr
 *.local
@@ -23,4 +27,7 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+<<<<<<< HEAD
 
+=======
+>>>>>>> aa9d6a7 (Initial commit)
