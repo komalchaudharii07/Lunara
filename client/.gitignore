@@ -8,11 +8,16 @@ pnpm-debug.log*
 lerna-debug.log*
 
 <<<<<<< HEAD
+<<<<<<< HEAD
 node_modules/
 .env
 =======
 node_modules
 >>>>>>> aa9d6a7 (Initial commit)
+=======
+node_modules/
+.env
+>>>>>>> 2b48b2f (Add Lunara frontend and backend updates)
 dist
 dist-ssr
 *.local
@@ -27,7 +32,5 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
-<<<<<<< HEAD
 
-=======
->>>>>>> aa9d6a7 (Initial commit)
+
