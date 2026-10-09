@@ -15,12 +15,11 @@ const userSchema = new mongoose.Schema(
       lowercase: true,
       trim: true,
     },
-
-    password: {
-      type: String,
-      required: true,
-      minlength: 6,
-    },
+password: {
+  type: String,
+  required: true,
+  select: false,
+},
 
     age: {
       type: Number,
@@ -57,6 +56,13 @@ const userSchema = new mongoose.Schema(
       type: String,
       trim: true,
     },
+    passwordChangedAt: { type: Date },
+
+    // stored as a SHA-256 hash, never the raw token
+    resetPasswordToken: { type: String, select: false },
+    resetPasswordExpires: { type: Date, select: false },
+    consentAcceptedAt: { type: Date },
+    consentVersion: { type: String },
 
     activityLevel: {
       type: String,

@@ -13,18 +13,18 @@ const categories = [
   "Wellness",
 ];
 
+const emptyForm = {
+  category: "Periods",
+  title: "",
+  content: "",
+  anonymous: true,
+};
+
 export default function Community() {
   const [posts, setPosts] = useState([]);
   const [activeCategory, setActiveCategory] = useState("All");
-
   const [showComposer, setShowComposer] = useState(false);
-
-  const [form, setForm] = useState({
-    category: "Periods",
-    title: "",
-    content: "",
-    anonymous: true,
-  });
+  const [form, setForm] = useState(emptyForm);
 
   const [loading, setLoading] = useState(true);
   const [posting, setPosting] = useState(false);
@@ -41,16 +41,12 @@ export default function Community() {
       setError("");
 
       const token = getToken();
-
-      if (!token) {
-        throw new Error("Please login again.");
-      }
+      if (!token) throw new Error("Please login again.");
 
       const data = await getPosts(token);
-
       setPosts(data.posts || []);
-    } catch (error) {
-      setError(error.message);
+    } catch (err) {
+      setError(err.message);
     } finally {
       setLoading(false);
     }
@@ -60,14 +56,13 @@ export default function Community() {
     loadPosts();
   }, []);
 
-  // FORM CHANGE
   const handleChange = (e) => {
     const { name, value, type, checked } = e.target;
 
-    setForm({
-      ...form,
+    setForm((prev) => ({
+      ...prev,
       [name]: type === "checkbox" ? checked : value,
-    });
+    }));
   };
 
   // CREATE POST
@@ -84,38 +79,27 @@ export default function Community() {
       setError("");
 
       const token = getToken();
+      if (!token) throw new Error("Please login again.");
 
-      if (!token) {
-        throw new Error("Please login again.");
-      }
+      const data = await createPost(form, token);
 
-      await createPost(form, token);
+      // add the new post to the top without reloading the list
+      setPosts((current) => [data.post, ...current]);
 
-      setForm({
-        category: "Periods",
-        title: "",
-        content: "",
-        anonymous: true,
-      });
-
+      setForm(emptyForm);
       setShowComposer(false);
-
-      await loadPosts();
-    } catch (error) {
-      setError(error.message);
+    } catch (err) {
+      setError(err.message);
     } finally {
       setPosting(false);
     }
   };
 
-  // LIKE
+  // LIKE / UNLIKE
   const handleLike = async (postId) => {
     try {
       const token = getToken();
-
-      if (!token) {
-        throw new Error("Please login again.");
-      }
+      if (!token) throw new Error("Please login again.");
 
       const data = await togglePostLike(postId, token);
 
@@ -123,23 +107,22 @@ export default function Community() {
         currentPosts.map((post) =>
           post._id === postId
             ? {
-              ...post,
-              likes: Array(data.likes).fill(null),
-            }
+                ...post,
+                likesCount: data.likesCount,
+                liked: data.liked,
+              }
             : post
         )
       );
-    } catch (error) {
-      setError(error.message);
+    } catch (err) {
+      setError(err.message);
     }
   };
 
   const filteredPosts =
     activeCategory === "All"
       ? posts
-      : posts.filter(
-        (post) => post.category === activeCategory
-      );
+      : posts.filter((post) => post.category === activeCategory);
 
   return (
     <div className="mx-auto max-w-5xl">
@@ -186,29 +169,38 @@ export default function Community() {
           </p>
 
           <div className="mt-5">
-            <label className="mb-2 block text-sm font-medium text-[#292331]">
+            <label
+              htmlFor="category"
+              className="mb-2 block text-sm font-medium text-[#292331]"
+            >
               Category
             </label>
 
             <select
+              id="category"
               name="category"
               value={form.category}
               onChange={handleChange}
               className="h-12 w-full rounded-xl border border-[#eadde1] bg-white px-4 text-sm outline-none focus:border-[#e58da4]"
             >
-              <option value="Periods">Periods</option>
-              <option value="PCOS & PCOD">PCOS & PCOD</option>
-              <option value="Pregnancy">Pregnancy</option>
-              <option value="Wellness">Wellness</option>
+              {categories.slice(1).map((category) => (
+                <option key={category} value={category}>
+                  {category}
+                </option>
+              ))}
             </select>
           </div>
 
           <div className="mt-5">
-            <label className="mb-2 block text-sm font-medium text-[#292331]">
+            <label
+              htmlFor="title"
+              className="mb-2 block text-sm font-medium text-[#292331]"
+            >
               Title
             </label>
 
             <input
+              id="title"
               type="text"
               name="title"
               value={form.title}
@@ -221,11 +213,15 @@ export default function Community() {
           </div>
 
           <div className="mt-5">
-            <label className="mb-2 block text-sm font-medium text-[#292331]">
+            <label
+              htmlFor="content"
+              className="mb-2 block text-sm font-medium text-[#292331]"
+            >
               Your post
             </label>
 
             <textarea
+              id="content"
               name="content"
               value={form.content}
               onChange={handleChange}
@@ -262,7 +258,7 @@ export default function Community() {
 
       {/* ERROR */}
       {error && (
-        <p className="mb-5 text-sm text-red-500">
+        <p role="alert" className="mb-5 text-sm text-red-500">
           {error}
         </p>
       )}
@@ -273,10 +269,12 @@ export default function Community() {
           <button
             key={category}
             onClick={() => setActiveCategory(category)}
-            className={`whitespace-nowrap rounded-full px-4 py-2 text-sm font-medium transition ${activeCategory === category
+            aria-pressed={activeCategory === category}
+            className={`whitespace-nowrap rounded-full px-4 py-2 text-sm font-medium transition ${
+              activeCategory === category
                 ? "bg-[#e58da4] text-white"
                 : "bg-white text-gray-500 hover:bg-[#fdf1f4]"
-              }`}
+            }`}
           >
             {category}
           </button>
@@ -329,9 +327,12 @@ export default function Community() {
               <div className="mt-5 border-t border-[#f2e8eb] pt-4">
                 <button
                   onClick={() => handleLike(post._id)}
-                  className="text-sm text-gray-500 transition hover:text-[#df829b]"
+                  aria-pressed={post.liked}
+                  className={`text-sm transition hover:text-[#df829b] ${
+                    post.liked ? "text-[#df829b]" : "text-gray-500"
+                  }`}
                 >
-                  ♡ {post.likes?.length || 0} Likes
+                  {post.liked ? "♥" : "♡"} {post.likesCount ?? 0} Likes
                 </button>
               </div>
             </article>

@@ -2,9 +2,13 @@ const { GoogleGenAI } = require("@google/genai");
 const Cycle = require("../models/Cycle");
 const Chat = require("../models/Chat");
 
+console.log("Key End",process.env.GEMINI_API_KEY?.slice(-4));
+
 const ai = new GoogleGenAI({
   apiKey: process.env.GEMINI_API_KEY,
 });
+
+
 
 const askLunaraAI = async (req, res) => {
   try {

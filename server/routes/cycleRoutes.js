@@ -19,4 +19,6 @@ router.get("/latest", protect, getLatestCycle);
 
 router.delete("/", protect, clearCycleHistory);
 
+router.get("/summary", protect, getCycleSummary);
+
 module.exports = router;

@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import AuthLayout from "../../../layouts/AuthLayout/AuthLayout";
 import loginImage from "../../../assets/login.jpeg";
-import { registerUser } from "../../../services/api";
+import { registerUser, saveToken } from "../../../services/api";
 
 export default function Register() {
   const navigate = useNavigate();
@@ -13,22 +13,30 @@ export default function Register() {
   const [age, setAge] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [accepted, setAccepted] = useState(false);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+
+    if (!accepted) {
+      setError("Please accept the Terms and Privacy Policy to continue.");
+      return;
+    }
 
     try {
       setLoading(true);
       setError("");
 
       const data = await registerUser({
-        name,
-        email,
+        name: name.trim(),
+        email: email.trim(),
         password,
         age: Number(age),
+        acceptedTerms: accepted,
       });
 
-      localStorage.setItem("token", data.token);
+      // clears any old token, then stores the new one
+      saveToken(data.token, true);
 
       navigate("/onboarding");
     } catch (error) {
@@ -46,7 +54,7 @@ export default function Register() {
           <div className="hidden md:block">
             <img
               src={loginImage}
-              alt="Healthcare professional"
+              alt=""
               className="h-full w-full object-cover"
             />
           </div>
@@ -73,27 +81,38 @@ export default function Register() {
               <form onSubmit={handleSubmit} className="mt-8 space-y-5">
 
                 <div>
-                  <label className="mb-2 block text-sm font-medium text-[#292331]">
+                  <label
+                    htmlFor="name"
+                    className="mb-2 block text-sm font-medium text-[#292331]"
+                  >
                     Name
                   </label>
 
                   <input
+                    id="name"
                     type="text"
+                    autoComplete="name"
                     placeholder="Enter your name"
                     value={name}
                     onChange={(e) => setName(e.target.value)}
                     required
+                    maxLength={100}
                     className="h-[52px] w-full rounded-xl border border-gray-200 px-4 text-sm outline-none focus:border-[#e58da4]"
                   />
                 </div>
 
                 <div>
-                  <label className="mb-2 block text-sm font-medium text-[#292331]">
+                  <label
+                    htmlFor="email"
+                    className="mb-2 block text-sm font-medium text-[#292331]"
+                  >
                     Email address
                   </label>
 
                   <input
+                    id="email"
                     type="email"
+                    autoComplete="email"
                     placeholder="Enter your email"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
@@ -103,38 +122,79 @@ export default function Register() {
                 </div>
 
                 <div>
-                  <label className="mb-2 block text-sm font-medium text-[#292331]">
+                  <label
+                    htmlFor="password"
+                    className="mb-2 block text-sm font-medium text-[#292331]"
+                  >
                     Password
                   </label>
 
                   <input
+                    id="password"
                     type="password"
-                    placeholder="Create a password"
+                    autoComplete="new-password"
+                    placeholder="At least 8 characters"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     required
-                    minLength={6}
+                    minLength={8}
+                    maxLength={72}
                     className="h-[52px] w-full rounded-xl border border-gray-200 px-4 text-sm outline-none focus:border-[#e58da4]"
                   />
                 </div>
 
                 <div>
-                  <label className="mb-2 block text-sm font-medium text-[#292331]">
+                  <label
+                    htmlFor="age"
+                    className="mb-2 block text-sm font-medium text-[#292331]"
+                  >
                     Age
                   </label>
 
                   <input
+                    id="age"
                     type="number"
                     placeholder="Enter your age"
                     value={age}
                     onChange={(e) => setAge(e.target.value)}
                     required
+                    min="10"
+                    max="100"
                     className="h-[52px] w-full rounded-xl border border-gray-200 px-4 text-sm outline-none focus:border-[#e58da4]"
                   />
                 </div>
 
+                <label className="flex items-start gap-2 text-sm text-gray-500">
+                  <input
+                    type="checkbox"
+                    checked={accepted}
+                    onChange={(e) => setAccepted(e.target.checked)}
+                    required
+                    className="mt-1 accent-[#e58da4]"
+                  />
+                  <span>
+                    I agree to the{" "}
+                    <Link
+                      to="/terms"
+                      target="_blank"
+                      className="font-medium text-[#e58da4]"
+                    >
+                      Terms
+                    </Link>{" "}
+                    and{" "}
+                    <Link
+                      to="/privacy"
+                      target="_blank"
+                      className="font-medium text-[#e58da4]"
+                    >
+                      Privacy Policy
+                    </Link>
+                    .
+                  </span>
+                </label>
+
                 {error && (
-                  <p className="text-sm text-red-500">
+                  <p role="alert" className="text-sm text-red-500">
                     {error}
                   </p>
                 )}
