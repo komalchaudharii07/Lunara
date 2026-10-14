@@ -13,31 +13,36 @@ export default function Onboarding() {
   const handleSubmit = async (e) => {
     e.preventDefault();
 
+    const cleanName = name.trim();
+    const ageNumber = Number(age);
+
+    if (!cleanName) {
+      setError("Please enter your name.");
+      return;
+    }
+
+    if (!Number.isInteger(ageNumber) || ageNumber < 10 || ageNumber > 100) {
+      setError("Please enter your age as a whole number between 10 and 100.");
+      return;
+    }
+
     setError("");
     setLoading(true);
 
     try {
-      const token = localStorage.getItem("token");
-
-      if (!token) {
-        throw new Error("Please login again");
-      }
-
-      await updateProfile(
-        {
-          name,
-          age: Number(age),
-        },
-        token
-      );
+      // the token is attached by api.js; an expired session goes to /login there
+      await updateProfile({ name: cleanName, age: ageNumber });
 
       navigate("/dashboard");
-    } catch (error) {
-      setError(error.message);
+    } catch (err) {
+      setError(err.message);
     } finally {
       setLoading(false);
     }
   };
+
+  const inputClass =
+    "h-[52px] w-full rounded-xl border border-gray-200 px-4 text-sm outline-none transition focus:border-[#e58da4]";
 
   return (
     <div className="min-h-screen bg-[#fdf5f6] px-6 py-10">
@@ -60,39 +65,51 @@ export default function Onboarding() {
 
           <form onSubmit={handleSubmit} className="space-y-5">
             <div>
-              <label className="mb-2 block text-sm font-medium text-[#292331]">
+              <label
+                htmlFor="name"
+                className="mb-2 block text-sm font-medium text-[#292331]"
+              >
                 Name
               </label>
 
               <input
+                id="name"
                 type="text"
+                autoComplete="name"
                 placeholder="Enter your name"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 required
-                className="h-[52px] w-full rounded-xl border border-gray-200 px-4 text-sm outline-none transition focus:border-[#e58da4]"
+                maxLength={100}
+                className={inputClass}
               />
             </div>
 
             <div>
-              <label className="mb-2 block text-sm font-medium text-[#292331]">
+              <label
+                htmlFor="age"
+                className="mb-2 block text-sm font-medium text-[#292331]"
+              >
                 Age
               </label>
 
               <input
+                id="age"
                 type="number"
+                inputMode="numeric"
+                step="1"
                 placeholder="Enter your age"
                 value={age}
                 onChange={(e) => setAge(e.target.value)}
                 required
                 min="10"
                 max="100"
-                className="h-[52px] w-full rounded-xl border border-gray-200 px-4 text-sm outline-none transition focus:border-[#e58da4]"
+                className={inputClass}
               />
             </div>
 
             {error && (
-              <p className="text-sm text-red-500">
+              <p role="alert" className="text-sm text-red-500">
                 {error}
               </p>
             )}

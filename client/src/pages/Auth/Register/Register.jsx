@@ -36,7 +36,7 @@ export default function Register() {
       });
 
       // clears any old token, then stores the new one
-      saveToken(data.token, true);
+      saveToken(data.token, false); // session only: safer on shared devices
 
       navigate("/onboarding");
     } catch (error) {
@@ -154,6 +154,8 @@ export default function Register() {
                   <input
                     id="age"
                     type="number"
+                    inputMode="numeric"
+                    step="1"
                     placeholder="Enter your age"
                     value={age}
                     onChange={(e) => setAge(e.target.value)}
@@ -177,6 +179,7 @@ export default function Register() {
                     <Link
                       to="/terms"
                       target="_blank"
+                      rel="noopener noreferrer"
                       className="font-medium text-[#e58da4]"
                     >
                       Terms
@@ -185,6 +188,7 @@ export default function Register() {
                     <Link
                       to="/privacy"
                       target="_blank"
+                      rel="noopener noreferrer"
                       className="font-medium text-[#e58da4]"
                     >
                       Privacy Policy

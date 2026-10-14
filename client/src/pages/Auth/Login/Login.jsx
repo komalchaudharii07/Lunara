@@ -1,12 +1,18 @@
 import { useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, Navigate, useLocation, useNavigate } from "react-router-dom";
 import AuthLayout from "../../../layouts/AuthLayout/AuthLayout";
 import loginImage from "../../../assets/login.jpeg";
-import { loginUser } from "../../../services/api";
+import {
+  consumeSessionExpired,
+  getToken,
+  loginUser,
+  saveToken,
+} from "../../../services/api";
 
 function MailIcon() {
   return (
     <svg
+      aria-hidden="true"
       width="20"
       height="20"
       viewBox="0 0 24 24"
@@ -23,6 +29,7 @@ function MailIcon() {
 function LockIcon() {
   return (
     <svg
+      aria-hidden="true"
       width="20"
       height="20"
       viewBox="0 0 24 24"
@@ -39,6 +46,7 @@ function LockIcon() {
 function EyeIcon({ visible }) {
   return visible ? (
     <svg
+      aria-hidden="true"
       width="20"
       height="20"
       viewBox="0 0 24 24"
@@ -51,6 +59,7 @@ function EyeIcon({ visible }) {
     </svg>
   ) : (
     <svg
+      aria-hidden="true"
       width="20"
       height="20"
       viewBox="0 0 24 24"
@@ -68,13 +77,25 @@ function EyeIcon({ visible }) {
 
 export default function Login() {
   const navigate = useNavigate();
+  const location = useLocation();
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [rememberMe, setRememberMe] = useState(false);
-  const [error, setError] = useState("");
+  // if the session just ended, say so (read once)
+  const [error, setError] = useState(() =>
+    consumeSessionExpired() ? "Your session ended. Please log in again." : ""
+  );
   const [loading, setLoading] = useState(false);
+
+  // where the user was going before being sent to login
+  const redirectTo = location.state?.from?.pathname || "/dashboard";
+
+  // already logged in: no need to see the login page
+  if (getToken() && !loading) {
+    return <Navigate to={redirectTo} replace />;
+  }
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -84,19 +105,20 @@ export default function Login() {
       setError("");
 
       const data = await loginUser({
-        email,
+        email: email.trim(),
         password,
       });
 
-      if (rememberMe) {
-        localStorage.setItem("token", data.token);
-      } else {
-        sessionStorage.setItem("token", data.token);
+      if (!data?.token) {
+        throw new Error("Login failed. Please try again.");
       }
 
-      navigate("/dashboard");
-    } catch (error) {
-      setError(error.message);
+      // clears any old token, then stores the new one
+      saveToken(data.token, rememberMe);
+
+      navigate(redirectTo, { replace: true });
+    } catch (err) {
+      setError(err.message);
     } finally {
       setLoading(false);
     }
@@ -110,7 +132,7 @@ export default function Login() {
           <div className="hidden md:block">
             <img
               src={loginImage}
-              alt="Healthcare professional"
+              alt=""
               className="h-full w-full object-cover"
             />
           </div>
@@ -137,7 +159,10 @@ export default function Login() {
               <form onSubmit={handleSubmit} className="mt-8 space-y-5">
 
                 <div>
-                  <label className="mb-2 block text-sm font-medium text-[#292331]">
+                  <label
+                    htmlFor="email"
+                    className="mb-2 block text-sm font-medium text-[#292331]"
+                  >
                     Email address
                   </label>
 
@@ -147,7 +172,9 @@ export default function Login() {
                     </span>
 
                     <input
+                      id="email"
                       type="email"
+                      autoComplete="email"
                       placeholder="Enter your email"
                       value={email}
                       onChange={(e) => setEmail(e.target.value)}
@@ -158,7 +185,10 @@ export default function Login() {
                 </div>
 
                 <div>
-                  <label className="mb-2 block text-sm font-medium text-[#292331]">
+                  <label
+                    htmlFor="password"
+                    className="mb-2 block text-sm font-medium text-[#292331]"
+                  >
                     Password
                   </label>
 
@@ -168,7 +198,9 @@ export default function Login() {
                     </span>
 
                     <input
+                      id="password"
                       type={showPassword ? "text" : "password"}
+                      autoComplete="current-password"
                       placeholder="Enter your password"
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
@@ -179,6 +211,10 @@ export default function Login() {
                     <button
                       type="button"
                       onClick={() => setShowPassword(!showPassword)}
+                      aria-label={
+                        showPassword ? "Hide password" : "Show password"
+                      }
+                      aria-pressed={showPassword}
                       className="text-gray-400 transition hover:text-gray-600"
                     >
                       <EyeIcon visible={showPassword} />
@@ -206,7 +242,7 @@ export default function Login() {
                 </div>
 
                 {error && (
-                  <p className="text-sm text-red-500">
+                  <p role="alert" className="text-sm text-red-500">
                     {error}
                   </p>
                 )}
@@ -220,6 +256,12 @@ export default function Login() {
                 </button>
 
               </form>
+
+              <p className="mt-6 text-center text-sm">
+                <Link to="/" className="text-gray-400 hover:text-[#d47790]">
+                  ← Back to home
+                </Link>
+              </p>
 
             </div>
           </div>

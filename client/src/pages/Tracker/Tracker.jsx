@@ -4,6 +4,8 @@ import {
   getCycles,
   clearCycleHistory,
   getCycleSummary,
+  updateCycle,
+  deleteCycle,
 } from "../../services/api";
 
 const symptomsList = [
@@ -13,6 +15,10 @@ const symptomsList = [
   "Back pain",
   "Fatigue",
   "Breast tenderness",
+  "Nausea",
+  "Acne",
+  "Trouble sleeping",
+  "Cravings",
 ];
 
 const moodsList = ["Happy", "Calm", "Okay", "Low", "Irritated"];
@@ -77,6 +83,8 @@ export default function Tracker() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [clearing, setClearing] = useState(false);
+  const [editing, setEditing] = useState(null); // { id, start, end }
+  const [editSaving, setEditSaving] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
 
@@ -84,20 +92,29 @@ export default function Tracker() {
     try {
       const data = await getCycleSummary();
       setSummary(data.summary);
-    } catch (err) {
-      setError(err.message);
+    } catch {
+      // keep showing the previous estimates; the save itself already worked
     }
   };
 
   useEffect(() => {
     const load = async () => {
       try {
-        const [cycleData, summaryData] = await Promise.all([
+        // one failing call must not hide the other
+        const [cycleResult, summaryResult] = await Promise.allSettled([
           getCycles(),
           getCycleSummary(),
         ]);
-        setCycles(cycleData.cycles || []);
-        setSummary(summaryData.summary);
+
+        if (cycleResult.status === "fulfilled") {
+          setCycles(cycleResult.value.cycles || []);
+        } else {
+          setError(cycleResult.reason.message);
+        }
+
+        if (summaryResult.status === "fulfilled") {
+          setSummary(summaryResult.value.summary);
+        }
       } catch (err) {
         setError(err.message);
       } finally {
@@ -149,6 +166,11 @@ export default function Tracker() {
 
     setMessage("");
     setError("");
+
+    if (selectedKey > dateToKey(new Date())) {
+      setError("You can't log a period in the future.");
+      return;
+    }
 
     if (!form.periodStartDate) {
       setForm((prev) => ({
@@ -221,15 +243,21 @@ export default function Tracker() {
         notes: form.notes,
       });
 
-      setCycles((prev) =>
-        [data.cycle, ...prev].sort(
-          (a, b) => new Date(b.periodStartDate) - new Date(a.periodStartDate)
-        )
-      );
+      // reload the list: a back-dated entry also changes the next cycle's gap
+      try {
+        const fresh = await getCycles();
+        setCycles(fresh.cycles || []);
+      } catch {
+        setCycles((prev) => [data.cycle, ...prev]);
+      }
 
       setForm({ periodStartDate: "", periodEndDate: "", mood: "", notes: "" });
       setSymptoms([]);
-      setMessage("Your cycle has been saved successfully.");
+      setMessage(
+        data.warning
+          ? `Saved. ${data.warning}`
+          : "Your cycle has been saved successfully."
+      );
 
       // predictions change after every save
       await loadSummary();
@@ -237,6 +265,94 @@ export default function Tracker() {
       setError(err.message);
     } finally {
       setSaving(false);
+    }
+  };
+
+  // reload cycles and estimates after an edit or delete
+  const refreshAll = async () => {
+    const [cycleResult, summaryResult] = await Promise.allSettled([
+      getCycles(),
+      getCycleSummary(),
+    ]);
+    if (cycleResult.status === "fulfilled") {
+      setCycles(cycleResult.value.cycles || []);
+    }
+    if (summaryResult.status === "fulfilled") {
+      setSummary(summaryResult.value.summary);
+    }
+  };
+
+  const startEdit = (cycle) => {
+    setMessage("");
+    setError("");
+    setEditing({
+      id: cycle._id,
+      start: cycle.periodStartDate ? cycle.periodStartDate.slice(0, 10) : "",
+      end: cycle.periodEndDate ? cycle.periodEndDate.slice(0, 10) : "",
+    });
+  };
+
+  const cancelEdit = () => setEditing(null);
+
+  // EDIT ONE CYCLE
+  const saveEdit = async () => {
+    if (!editing) return;
+
+    if (!editing.start) {
+      setError("Please choose a start date.");
+      return;
+    }
+
+    const today = dateToKey(new Date());
+    if (editing.start > today || (editing.end && editing.end > today)) {
+      setError("You can't log a period in the future.");
+      return;
+    }
+
+    if (editing.end && editing.end < editing.start) {
+      setError("The end date can't be before the start date.");
+      return;
+    }
+
+    setEditSaving(true);
+    setMessage("");
+    setError("");
+
+    try {
+      await updateCycle(editing.id, {
+        periodStartDate: editing.start,
+        // null removes the end date (period still going)
+        periodEndDate: editing.end || null,
+      });
+      setEditing(null);
+      await refreshAll();
+      setMessage("Your cycle has been updated.");
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setEditSaving(false);
+    }
+  };
+
+  // DELETE ONE CYCLE
+  const handleDeleteCycle = async (cycle) => {
+    if (
+      !window.confirm(
+        `Delete the period that started on ${formatDate(cycle.periodStartDate)}?`
+      )
+    )
+      return;
+
+    setMessage("");
+    setError("");
+
+    try {
+      await deleteCycle(cycle._id);
+      if (editing?.id === cycle._id) setEditing(null);
+      await refreshAll();
+      setMessage("That period has been deleted.");
+    } catch (err) {
+      setError(err.message);
     }
   };
 
@@ -279,13 +395,19 @@ export default function Tracker() {
   const isSelectedPeriodDate = (dateKey) =>
     isDateBetween(dateKey, form.periodStartDate, form.periodEndDate);
 
+  // the server may send full ISO strings, so compare only YYYY-MM-DD
+  const day = (value) => (value ? String(value).slice(0, 10) : "");
+
+  // never highlight fertile days when the goal is to avoid pregnancy
+  const showFertile = hasFertile && goal !== "avoid";
+
   const isFertileDate = (dateKey) =>
-    hasFertile &&
-    dateKey >= summary.fertileStart &&
-    dateKey <= summary.fertileEnd;
+    showFertile &&
+    dateKey >= day(summary.fertileStart) &&
+    dateKey <= day(summary.fertileEnd);
 
   const isOvulationDate = (dateKey) =>
-    hasFertile && dateKey === summary.ovulation;
+    showFertile && dateKey === day(summary.ovulation);
 
   const isTodayKey = (dateKey) => dateKey === dateToKey(new Date());
 
@@ -496,7 +618,9 @@ export default function Tracker() {
                   <div>
                     <p className="text-[11px] text-white/40">Ovulation</p>
                     <p className="mt-1 text-lg font-semibold">
-                      {summary.ovulation ? formatDate(summary.ovulation) : "—"}
+                      {summary.ovulation && goal !== "avoid"
+                        ? formatDate(summary.ovulation)
+                        : "—"}
                     </p>
                   </div>
 
@@ -513,8 +637,11 @@ export default function Tracker() {
                     )}
                   </div>
                 </div>
-
-                <div className="mt-4 rounded-2xl bg-[#e58da4]/10 p-4">
+                                <div
+                  className={`mt-4 rounded-2xl bg-[#e58da4]/10 p-4 ${
+                    goal === "avoid" ? "hidden" : ""
+                  }`}
+                >
                   <p className="text-[11px] font-medium uppercase tracking-wider text-[#f2a9bb]">
                     Fertile window
                   </p>
@@ -532,7 +659,7 @@ export default function Tracker() {
                   )}
 
                   <p className="mt-1.5 text-[10px] leading-4 text-white/40">
-                    Based on your last {Math.min(summary.cyclesTracked - 1, 6)}{" "}
+                    Based on your last {summary.cyclesUsed ?? Math.min(summary.cyclesTracked - 1, 6)}{" "}
                     cycles. Estimates can vary from cycle to cycle.
                   </p>
                 </div>
@@ -716,29 +843,20 @@ export default function Tracker() {
                   Pregnancy prevention
                 </p>
 
-                {hasFertile ? (
-                  <p className="mt-3 text-sm leading-6 text-gray-600">
-                    Your estimated fertile window is{" "}
-                    <strong>{formatDate(summary.fertileStart)}</strong> to{" "}
-                    <strong>{formatDate(summary.fertileEnd)}</strong>.
-                  </p>
-                ) : (
-                  <p className="mt-3 text-sm leading-6 text-gray-500">
-                    {noEstimateText}
-                  </p>
-                )}
-
-                <div className="mt-4 rounded-xl bg-white p-4">
+                <div className="mt-3 rounded-xl bg-white p-4">
                   <p className="text-sm leading-6 text-gray-600">
-                    Calendar-based estimates are not a reliable way to prevent
-                    pregnancy. Do not rely on predicted “safe days” alone.
+                    Lunara doesn&apos;t show fertile days when your goal is to
+                    avoid pregnancy, because calendar-based estimates are not
+                    a reliable way to prevent it. Please don&apos;t rely on
+                    predicted &ldquo;safe days&rdquo;.
                   </p>
                 </div>
 
-                <p className="mt-3 text-xs leading-5 text-gray-400">
-                  Use reliable contraception consistently, and talk to a doctor
-                  about the best option for you. Cycle predictions can be
-                  inaccurate, especially with irregular cycles.
+                <p className="mt-3 text-xs leading-5 text-gray-500">
+                  Use reliable contraception consistently, and talk to a
+                  doctor or pharmacist about the best option for you. Cycle
+                  predictions can be inaccurate, especially with irregular
+                  cycles.
                 </p>
               </div>
             )}
@@ -867,6 +985,20 @@ export default function Tracker() {
             )}
           </div>
 
+          {(editing || message === "That period has been deleted.") &&
+            (error || message) && (
+              <p
+                role={error ? "alert" : "status"}
+                className={`mt-4 rounded-xl px-4 py-3 text-sm ${
+                  error
+                    ? "bg-red-500/10 text-red-300"
+                    : "bg-green-500/10 text-green-300"
+                }`}
+              >
+                {error || message}
+              </p>
+            )}
+
           {loading ? (
             <p className="mt-6 text-sm text-white/50">
               Loading your history...
@@ -922,6 +1054,84 @@ export default function Tracker() {
                     <p className="mt-3 text-xs text-white/45">
                       {cycle.symptoms.join(", ")}
                     </p>
+                  )}
+
+                  {editing?.id === cycle._id ? (
+                    <div className="mt-4 space-y-3 rounded-xl border border-white/10 bg-white/5 p-3">
+                      <div className="grid grid-cols-2 gap-3">
+                        <label className="text-xs text-white/50">
+                          Start
+                          <input
+                            type="date"
+                            value={editing.start}
+                            max={dateToKey(new Date())}
+                            onChange={(e) =>
+                              setEditing((prev) => ({
+                                ...prev,
+                                start: e.target.value,
+                              }))
+                            }
+                            className="mt-1 w-full rounded-lg border border-white/10 bg-transparent px-2 py-2 text-sm text-white [color-scheme:dark]"
+                          />
+                        </label>
+
+                        <label className="text-xs text-white/50">
+                          End
+                          <input
+                            type="date"
+                            value={editing.end}
+                            min={editing.start || undefined}
+                            max={dateToKey(new Date())}
+                            onChange={(e) =>
+                              setEditing((prev) => ({
+                                ...prev,
+                                end: e.target.value,
+                              }))
+                            }
+                            className="mt-1 w-full rounded-lg border border-white/10 bg-transparent px-2 py-2 text-sm text-white [color-scheme:dark]"
+                          />
+                        </label>
+                      </div>
+
+                      <p className="text-[11px] text-white/35">
+                        Leave the end date empty if your period hasn't ended.
+                      </p>
+
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          onClick={saveEdit}
+                          disabled={editSaving}
+                          className="rounded-lg bg-[#e58da4] px-3 py-2 text-xs font-semibold text-white disabled:opacity-50"
+                        >
+                          {editSaving ? "Saving..." : "Save"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={cancelEdit}
+                          className="rounded-lg border border-white/10 px-3 py-2 text-xs text-white/60"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="mt-4 flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => startEdit(cycle)}
+                        className="rounded-lg border border-white/10 px-3 py-1.5 text-xs text-white/60 hover:text-white"
+                      >
+                        Edit
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteCycle(cycle)}
+                        className="rounded-lg border border-white/10 px-3 py-1.5 text-xs text-white/60 hover:border-red-300/30 hover:text-red-300"
+                      >
+                        Delete
+                      </button>
+                    </div>
                   )}
                 </div>
               ))}

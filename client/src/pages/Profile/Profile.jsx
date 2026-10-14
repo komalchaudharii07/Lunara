@@ -22,20 +22,11 @@ export default function Profile() {
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
 
-  const getToken = () =>
-    localStorage.getItem("token") ||
-    sessionStorage.getItem("token");
-
   useEffect(() => {
     const loadProfile = async () => {
       try {
-        const token = getToken();
 
-        if (!token) {
-          throw new Error("Please login again");
-        }
-
-        const data = await getCurrentUser(token);
+        const data = await getCurrentUser();
         const user = data.user;
 
         setProfile({
@@ -77,12 +68,6 @@ export default function Profile() {
       setMessage("");
       setError("");
 
-      const token = getToken();
-
-      if (!token) {
-        throw new Error("Please login again");
-      }
-
       await updateProfile(
         {
           name: profile.name.trim(),
@@ -93,8 +78,7 @@ export default function Profile() {
           phone: profile.phone.trim() || null,
           location: profile.location.trim() || null,
           activityLevel: profile.activityLevel || null,
-        },
-        token
+        }
       );
 
       setMessage("Profile updated successfully.");

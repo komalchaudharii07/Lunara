@@ -6,18 +6,35 @@ const protect = require("../middleware/authMiddleware");
 
 const router = express.Router();
 
+const byUser = (req) => String(req.user);
+
+// burst limit
 const aiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 20,
+  limit: 20,
   standardHeaders: true,
   legacyHeaders: false,
-  keyGenerator: (req) => String(req.user),
+  skipFailedRequests: true, // a failed AI call doesn't use up the user's quota
+  keyGenerator: byUser,
   message: {
     message: "You've sent a lot of messages. Please try again in a few minutes.",
   },
 });
 
-// protect must run first so req.user exists for the limiter
-router.post("/ask", protect, aiLimiter, askLunaraAI);
+// daily cost cap (each call is a paid request)
+const aiDailyLimiter = rateLimit({
+  windowMs: 24 * 60 * 60 * 1000,
+  limit: 100,
+  standardHeaders: true,
+  legacyHeaders: false,
+  skipFailedRequests: true,
+  keyGenerator: byUser,
+  message: {
+    message: "You've reached today's limit for Lunara AI. Please come back tomorrow.",
+  },
+});
+
+// protect must run first so req.user exists for the limiters
+router.post("/ask", protect, aiLimiter, aiDailyLimiter, askLunaraAI);
 
 module.exports = router;

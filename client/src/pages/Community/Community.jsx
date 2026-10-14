@@ -1,8 +1,10 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   getPosts,
   createPost,
   togglePostLike,
+  deletePost,
+  reportPost,
 } from "../../services/api";
 
 const categories = [
@@ -11,6 +13,14 @@ const categories = [
   "PCOS & PCOD",
   "Pregnancy",
   "Wellness",
+];
+
+const REPORT_REASONS = [
+  ["spam", "Spam"],
+  ["harassment", "Harassment"],
+  ["misinformation", "Misinformation"],
+  ["self-harm", "Self-harm concern"],
+  ["other", "Other"],
 ];
 
 const emptyForm = {
@@ -29,21 +39,19 @@ export default function Community() {
   const [loading, setLoading] = useState(true);
   const [posting, setPosting] = useState(false);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+  const [crisis, setCrisis] = useState(false);
+  const [reportingId, setReportingId] = useState(null);
 
-  const getToken = () =>
-    localStorage.getItem("token") ||
-    sessionStorage.getItem("token");
+  const likingRef = useRef(new Set());
 
-  // FETCH POSTS
-  const loadPosts = async () => {
+  // FETCH POSTS (the category filter is applied by the server)
+  const loadPosts = async (category) => {
     try {
       setLoading(true);
       setError("");
 
-      const token = getToken();
-      if (!token) throw new Error("Please login again.");
-
-      const data = await getPosts(token);
+      const data = await getPosts(category === "All" ? {} : { category });
       setPosts(data.posts || []);
     } catch (err) {
       setError(err.message);
@@ -53,8 +61,8 @@ export default function Community() {
   };
 
   useEffect(() => {
-    loadPosts();
-  }, []);
+    loadPosts(activeCategory);
+  }, [activeCategory]);
 
   const handleChange = (e) => {
     const { name, value, type, checked } = e.target;
@@ -78,14 +86,14 @@ export default function Community() {
       setPosting(true);
       setError("");
 
-      const token = getToken();
-      if (!token) throw new Error("Please login again.");
-
-      const data = await createPost(form, token);
+      const data = await createPost(form);
 
       // add the new post to the top without reloading the list
-      setPosts((current) => [data.post, ...current]);
+      if (activeCategory === "All" || data.post.category === activeCategory) {
+        setPosts((current) => [data.post, ...current]);
+      }
 
+      setCrisis(!!data.crisis);
       setForm(emptyForm);
       setShowComposer(false);
     } catch (err) {
@@ -97,11 +105,12 @@ export default function Community() {
 
   // LIKE / UNLIKE
   const handleLike = async (postId) => {
-    try {
-      const token = getToken();
-      if (!token) throw new Error("Please login again.");
+    // ignore double clicks while a request for this post is running
+    if (likingRef.current.has(postId)) return;
+    likingRef.current.add(postId);
 
-      const data = await togglePostLike(postId, token);
+    try {
+      const data = await togglePostLike(postId);
 
       setPosts((currentPosts) =>
         currentPosts.map((post) =>
@@ -116,13 +125,39 @@ export default function Community() {
       );
     } catch (err) {
       setError(err.message);
+    } finally {
+      likingRef.current.delete(postId);
     }
   };
 
-  const filteredPosts =
-    activeCategory === "All"
-      ? posts
-      : posts.filter((post) => post.category === activeCategory);
+  // DELETE MY POST
+  const handleDelete = async (postId) => {
+    if (!window.confirm("Delete this post? This can't be undone.")) return;
+
+    try {
+      setError("");
+      await deletePost(postId);
+      setPosts((current) => current.filter((post) => post._id !== postId));
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  // REPORT A POST
+  const handleReport = async (postId, reason) => {
+    try {
+      setError("");
+      const data = await reportPost(postId, reason);
+      setReportingId(null);
+      setNotice(data.message || "Thank you. Our team will review this post.");
+      if (reason === "self-harm") setCrisis(true);
+    } catch (err) {
+      setReportingId(null);
+      setError(err.message);
+    }
+  };
+
+  const filteredPosts = posts;
 
   return (
     <div className="mx-auto max-w-5xl">
@@ -144,15 +179,45 @@ export default function Community() {
         </div>
 
         <button
+          aria-expanded={showComposer}
           onClick={() => {
             setShowComposer(!showComposer);
             setError("");
           }}
           className="h-11 rounded-xl bg-[#e58da4] px-5 text-sm font-semibold text-white transition hover:bg-[#d97d96]"
         >
-          + Create Post
+          {showComposer ? "Cancel" : "+ Create Post"}
         </button>
       </div>
+
+      {/* COMMUNITY GUIDELINES */}
+      <p className="mb-5 rounded-2xl bg-white px-5 py-3 text-xs leading-5 text-gray-500">
+        Be kind and respectful. Posts here are from other members, not doctors,
+        so don't treat them as medical advice. Never share phone numbers or
+        addresses. You can report any post that worries you.
+      </p>
+
+      {/* CRISIS SUPPORT (shown after a sensitive post or report) */}
+      {crisis && (
+        <div
+          role="alert"
+          className="mb-5 rounded-2xl border border-[#f3c9d4] bg-[#fff0f3] px-5 py-4 text-sm leading-6 text-[#7e4053]"
+        >
+          <p className="font-semibold">You are not alone.</p>
+          <p className="mt-1">
+            If you are thinking about hurting yourself, please talk to someone
+            right now: call Tele-MANAS at <strong>14416</strong>, or call{" "}
+            <strong>112</strong> for emergency help.
+          </p>
+          <button
+            type="button"
+            onClick={() => setCrisis(false)}
+            className="mt-2 text-xs underline"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
 
       {/* CREATE POST */}
       {showComposer && (
@@ -256,6 +321,16 @@ export default function Community() {
         </form>
       )}
 
+      {/* NOTICE */}
+      {notice && (
+        <p
+          role="status"
+          className="mb-5 rounded-xl bg-[#f0faf3] px-4 py-3 text-sm text-green-600"
+        >
+          {notice}
+        </p>
+      )}
+
       {/* ERROR */}
       {error && (
         <p role="alert" className="mb-5 text-sm text-red-500">
@@ -268,7 +343,11 @@ export default function Community() {
         {categories.map((category) => (
           <button
             key={category}
-            onClick={() => setActiveCategory(category)}
+            onClick={() => {
+              setActiveCategory(category);
+              setNotice("");
+              setReportingId(null);
+            }}
             aria-pressed={activeCategory === category}
             className={`whitespace-nowrap rounded-full px-4 py-2 text-sm font-medium transition ${
               activeCategory === category
@@ -324,7 +403,7 @@ export default function Community() {
                 {post.content}
               </p>
 
-              <div className="mt-5 border-t border-[#f2e8eb] pt-4">
+              <div className="mt-5 flex items-center justify-between border-t border-[#f2e8eb] pt-4">
                 <button
                   onClick={() => handleLike(post._id)}
                   aria-pressed={post.liked}
@@ -334,7 +413,41 @@ export default function Community() {
                 >
                   {post.liked ? "♥" : "♡"} {post.likesCount ?? 0} Likes
                 </button>
+
+                {post.isOwner ? (
+                  <button
+                    onClick={() => handleDelete(post._id)}
+                    className="text-sm text-gray-400 transition hover:text-red-500"
+                  >
+                    Delete
+                  </button>
+                ) : (
+                  <button
+                    onClick={() =>
+                      setReportingId(reportingId === post._id ? null : post._id)
+                    }
+                    aria-expanded={reportingId === post._id}
+                    className="text-sm text-gray-400 transition hover:text-[#df829b]"
+                  >
+                    Report
+                  </button>
+                )}
               </div>
+
+              {reportingId === post._id && (
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  <span className="text-xs text-gray-400">Why?</span>
+                  {REPORT_REASONS.map(([value, label]) => (
+                    <button
+                      key={value}
+                      onClick={() => handleReport(post._id, value)}
+                      className="rounded-full border border-[#eadde1] px-3 py-1 text-xs text-gray-500 transition hover:border-[#e58da4]"
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              )}
             </article>
           ))}
 

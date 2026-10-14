@@ -1,11 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import {
   getCurrentUser,
   getLatestCycle,
+  getCycleSummary,
 } from "../../services/api";
-
-const DAY = 1000 * 60 * 60 * 24;
 
 // Read only the "YYYY-MM-DD" part and build a LOCAL date (avoids UTC shifts)
 const toLocalDate = (value) => {
@@ -29,70 +28,72 @@ const formatDate = (date) => {
   });
 };
 
-const getDaysBetween = (start, end) => Math.round((end - start) / DAY);
-
 export default function Dashboard() {
   const navigate = useNavigate();
 
   const [user, setUser] = useState(null);
   const [cycle, setCycle] = useState(null);
+  const [summary, setSummary] = useState(null);
   const [loadError, setLoadError] = useState("");
   const [loading, setLoading] = useState(true);
-  const [summary, setSummary] = useState(null);
-
 
   useEffect(() => {
+    let ignore = false;
+
     const fetchDashboardData = async () => {
-      try {
-        // token is attached by api.js; a real 401 redirects to /login there
-        const [userData, cycleData] = await Promise.all([
+      // token is attached by api.js; a real 401 redirects to /login there.
+      // allSettled: one failing call must not blank the whole dashboard.
+      const [userResult, cycleResult, summaryResult] =
+        await Promise.allSettled([
           getCurrentUser(),
           getLatestCycle(),
+          getCycleSummary(),
         ]);
 
-        setUser(userData.user);
-        setCycle(cycleData.cycle);
-      } catch (error) {
-        setLoadError(error.message);
-      } finally {
-        setLoading(false);
+      if (ignore) return;
+
+      const problems = [];
+
+      if (userResult.status === "fulfilled") {
+        setUser(userResult.value.user);
+      } else {
+        problems.push(userResult.reason.message);
       }
+
+      if (cycleResult.status === "fulfilled") {
+        setCycle(cycleResult.value.cycle);
+      } else {
+        problems.push(cycleResult.reason.message);
+      }
+
+      if (summaryResult.status === "fulfilled") {
+        setSummary(summaryResult.value.summary);
+      } else {
+        problems.push(summaryResult.reason.message);
+      }
+
+      setLoadError(problems[0] || "");
+      setLoading(false);
     };
 
     fetchDashboardData();
+
+    return () => {
+      ignore = true;
+    };
   }, []);
 
+  // one source of truth: the server's summary (same numbers as the Tracker)
   const cycleInfo = useMemo(() => {
-    if (!cycle?.periodStartDate) {
-      return null;
-    }
-
-    const start = toLocalDate(cycle.periodStartDate);
-
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-
-    const currentDay = getDaysBetween(start, today) + 1;
-
-    if (!cycle.cycleLength) {
-      return {
-        currentDay: currentDay > 0 ? currentDay : null,
-        nextPeriod: null,
-        daysLate: 0,
-      };
-    }
-
-    const nextPeriod = new Date(start);
-    nextPeriod.setDate(nextPeriod.getDate() + cycle.cycleLength);
-
-    const daysLate = Math.max(getDaysBetween(nextPeriod, today), 0);
+    if (!summary) return null;
 
     return {
-      currentDay: currentDay > 0 ? currentDay : null,
-      nextPeriod,
-      daysLate,
+      currentDay: summary.currentDay,
+      staleData: summary.staleData,
+      nextPeriod: summary.ready ? toLocalDate(summary.nextPeriod) : null,
+      daysLate: summary.daysLate || 0,
     };
-  }, [cycle]);
+  }, [summary]);
 
   if (loading) {
     return (
@@ -104,9 +105,9 @@ export default function Dashboard() {
 
   const quickActions = [
     { icon: "+", title: "Track period", text: "Record your latest period", to: "/tracker" },
-    { icon: "♡", title: "Log symptoms", text: "Keep your wellbeing record", to: "/tracker" },
+    { icon: "♡", title: "Log symptoms", text: "Keep your wellbeing record", to: "/daily-log" },
     { icon: "✦", title: "Ask Lunara AI", text: "Get personalized guidance", to: "/ai-chat" },
-    { icon: "♡", title: "Find care", text: "Doctors and nearby clinics", to: "/doctors" },
+    { icon: "✚", title: "Find care", text: "Doctors and nearby clinics", to: "/doctors" },
   ];
 
   return (
@@ -153,7 +154,7 @@ export default function Dashboard() {
           </div>
 
           {!cycle ? (
-            <div className="mt-8 rounded-2xl bg-[#fff6f8] p-6">
+            loadError ? null : <div className="mt-8 rounded-2xl bg-[#fff6f8] p-6">
               <p className="font-medium text-[#292331]">
                 Your cycle journey starts here
               </p>
@@ -176,7 +177,11 @@ export default function Dashboard() {
                 <p className="text-xs text-gray-500">Current cycle</p>
 
                 <p className="mt-2 text-2xl font-semibold text-[#292331]">
-                  {cycleInfo?.currentDay ? `Day ${cycleInfo.currentDay}` : "—"}
+                  {cycleInfo?.staleData
+                    ? "Log a new period"
+                    : cycleInfo?.currentDay
+                    ? `Day ${cycleInfo.currentDay}`
+                    : "—"}
                 </p>
 
                 <p className="mt-1 text-xs text-gray-400">
@@ -185,14 +190,14 @@ export default function Dashboard() {
               </div>
 
               <div className="rounded-2xl bg-[#fff6f8] p-5">
-                <p className="text-xs text-gray-500">Last cycle length</p>
+                <p className="text-xs text-gray-500">Previous cycle length</p>
 
                 <p className="mt-2 text-2xl font-semibold text-[#292331]">
                   {cycle.cycleLength ? `${cycle.cycleLength} days` : "Learning"}
                 </p>
 
                 <p className="mt-1 text-xs text-gray-400">
-                  Gap before this period
+                  Gap before your latest period
                 </p>
               </div>
 
@@ -249,10 +254,10 @@ export default function Dashboard() {
 
         <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           {quickActions.map((action) => (
-            <button
+            <Link
               key={action.title}
-              onClick={() => navigate(action.to)}
-              className="rounded-2xl bg-white p-5 text-left shadow-[0_8px_30px_rgba(170,95,120,0.06)] transition hover:-translate-y-0.5"
+              to={action.to}
+              className="rounded-2xl bg-white p-5 text-left shadow-[0_8px_30px_rgba(170,95,120,0.06)] transition hover:-translate-y-0.5 block"
             >
               <div
                 aria-hidden="true"
@@ -264,7 +269,7 @@ export default function Dashboard() {
               <h3 className="font-semibold text-[#292331]">{action.title}</h3>
 
               <p className="mt-1 text-xs text-gray-500">{action.text}</p>
-            </button>
+            </Link>
           ))}
         </div>
       </div>
@@ -272,7 +277,7 @@ export default function Dashboard() {
       {/* HEALTH SNAPSHOT */}
       <div className="mt-8 grid gap-6 lg:grid-cols-2">
         <div className="rounded-3xl bg-white p-6 shadow-[0_8px_30px_rgba(170,95,120,0.06)]">
-          <p className="text-sm text-gray-400">Today's snapshot</p>
+          <p className="text-sm text-gray-400">Latest snapshot</p>
 
           <h2 className="mt-2 text-xl font-semibold text-[#292331]">
             How are you feeling?
@@ -302,7 +307,9 @@ export default function Dashboard() {
           <p className="text-sm text-gray-400">Your progress</p>
 
           <h2 className="mt-2 text-xl font-semibold text-[#292331]">
-            Building your cycle history
+            {summary?.cyclesTracked
+              ? `${summary.cyclesTracked} period${summary.cyclesTracked === 1 ? "" : "s"} tracked`
+              : "Building your cycle history"}
           </h2>
 
           <p className="mt-3 text-sm leading-6 text-gray-500">

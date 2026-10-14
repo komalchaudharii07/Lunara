@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { getDoctors } from "../../services/api";
 import NearbyMap from "../../components/doctors/NearbyMap";
+import { Link } from "react-router-dom";
 
 const careOptions = [
   {
@@ -49,20 +50,11 @@ export default function Doctors() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  const getToken = () =>
-    localStorage.getItem("token") ||
-    sessionStorage.getItem("token");
-
   useEffect(() => {
     const loadDoctors = async () => {
       try {
-        const token = getToken();
 
-        if (!token) {
-          throw new Error("Please login again.");
-        }
-
-        const data = await getDoctors(token);
+        const data = await getDoctors();
         setDoctors(data.doctors || []);
       } catch (error) {
         setError(error.message);
@@ -81,8 +73,9 @@ export default function Doctors() {
   const filteredDoctors = doctors.filter((doctor) => {
     if (!selectedCare) return true;
 
-    const specialization =
-      doctor.specialization?.toLowerCase() || "";
+    // treat the British spelling "gynaecologist" the same as "gynecologist"
+    const specialization = (doctor.specialization?.toLowerCase() || "")
+      .replace("gynaecolog", "gynecolog");
 
     if (selectedCare === "gynecologist") {
       return (
@@ -159,6 +152,7 @@ export default function Doctors() {
               <button
                 key={option.id}
                 onClick={() => setSelectedCare(option.id)}
+                aria-pressed={isSelected}
                 className={`group rounded-3xl border p-5 text-left transition ${isSelected
                   ? "border-[#e58da4] bg-[#fff4f7] shadow-[0_12px_35px_rgba(170,95,120,0.12)]"
                   : "border-[#eee3e6] bg-white hover:-translate-y-0.5 hover:border-[#efb6c4] hover:shadow-[0_12px_35px_rgba(170,95,120,0.08)]"
@@ -195,7 +189,44 @@ export default function Doctors() {
       </section>
 
       {/* RESULTS */}
-      {selectedCare && (
+      {/* URGENT CARE: emergency numbers first, then hospitals nearby */}
+      {selectedCare === "urgent" && (
+        <section>
+          <div
+            role="alert"
+            className="mb-6 rounded-3xl border border-red-200 bg-red-50 p-6"
+          >
+            <h2 className="text-xl font-semibold text-red-700">
+              If this is an emergency, get help now
+            </h2>
+
+            <p className="mt-2 text-sm leading-6 text-red-700">
+              Call <strong>112</strong> (emergency) or <strong>108</strong>{" "}
+              (ambulance), or go to the nearest hospital. Don&apos;t wait for
+              an online consultation if you have very heavy bleeding (soaking
+              a pad every hour), severe or sudden pain, fainting, bleeding or
+              pain during pregnancy, or fever with pelvic pain.
+            </p>
+
+            <p className="mt-2 text-sm leading-6 text-red-700">
+              If you are thinking about harming yourself, call Tele-MANAS on{" "}
+              <strong>14416</strong>.
+            </p>
+          </div>
+
+          <div className="mb-5">
+            <h3 className="text-lg font-semibold text-[#292331]">
+              Hospitals and clinics near you
+            </h3>
+          </div>
+
+          <div className="rounded-3xl bg-white p-4 shadow-[0_12px_40px_rgba(170,95,120,0.08)] sm:p-5">
+            <NearbyMap careType="urgent" />
+          </div>
+        </section>
+      )}
+
+      {selectedCare && selectedCare !== "urgent" && (
         <section>
           <div className="mb-6 flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
             <div>
@@ -315,7 +346,7 @@ export default function Doctors() {
                             </p>
 
                             <p className="mt-1 text-sm font-medium text-[#292331]">
-                              {doctor.experience} years
+                              {doctor.experience != null ? `${doctor.experience} years` : "—"}
                             </p>
                           </div>
 
@@ -325,7 +356,9 @@ export default function Doctors() {
                             </p>
 
                             <p className="mt-1 text-sm font-medium text-[#292331]">
-                              ₹{doctor.consultationFee}
+                              {doctor.consultationFee != null
+                                ? `₹${Number(doctor.consultationFee).toLocaleString("en-IN")}`
+                                : "—"}
                             </p>
                           </div>
                         </div>
@@ -334,11 +367,14 @@ export default function Doctors() {
                           {doctor.qualification}
                         </p>
 
-                        <button
-                          className="mt-6 h-11 w-full rounded-xl bg-[#e58da4] text-sm font-semibold text-white transition hover:bg-[#d97d96]"
+                        
+                                                  <Link
+                          to={`/doctors/${doctor._id}/book`}
+                          className="mt-6 flex h-11 w-full items-center justify-center rounded-xl bg-[#e58da4] text-sm font-semibold text-white hover:bg-[#d97d96]"
                         >
-                          Book Video Consultation
-                        </button>
+                          Book appointment
+                        </Link>
+                       
                       </div>
                     ))}
                   </div>

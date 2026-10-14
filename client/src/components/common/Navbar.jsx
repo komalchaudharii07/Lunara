@@ -1,72 +1,130 @@
+import { useState } from "react";
 import { Link } from "react-router-dom";
+import { getToken } from "../../services/api";
 
-function Navbar() {
+const links = [
+  ["Features", "#features"],
+  ["How it works", "#how-it-works"],
+  ["About", "#about"],
+  ["Contact", "#contact"],
+];
+
+export default function Navbar() {
+  const [open, setOpen] = useState(false);
+  const loggedIn = !!getToken();
+
+  const close = () => setOpen(false);
+
   return (
-    <nav className="w-full border-b border-pink-100 bg-white/90 backdrop-blur-md">
-      <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-5 lg:px-10">
-
-        {/* Logo */}
-        <Link to="/" className="flex items-center gap-2">
-          <div className="flex h-10 w-10 items-center justify-center rounded-full bg-pink-100 text-xl">
-            🌙
-          </div>
-
-          <span className="text-2xl font-bold tracking-tight text-gray-900">
-            Lunara
-          </span>
+    <header className="sticky top-0 z-50 border-b border-gray-100 bg-white/90 backdrop-blur">
+      <nav
+        aria-label="Main"
+        className="mx-auto flex h-16 max-w-6xl items-center justify-between px-6"
+      >
+        <Link to="/" className="font-serif text-2xl font-semibold text-pink-600">
+          Lunara
         </Link>
 
-        {/* Navigation */}
-        <div className="hidden items-center gap-7 md:flex">
-          <a
-            href="#features"
-            className="text-sm font-medium text-gray-600 transition hover:text-pink-600"
-          >
-            Features
-          </a>
+        {/* desktop */}
+        <ul className="hidden items-center gap-8 md:flex">
+          {links.map(([label, href]) => (
+            <li key={href}>
+              <a
+                href={href}
+                className="text-sm font-medium text-gray-600 transition hover:text-pink-600"
+              >
+                {label}
+              </a>
+            </li>
+          ))}
+        </ul>
 
-          <a
-            href="#how-it-works"
-            className="text-sm font-medium text-gray-600 transition hover:text-pink-600"
-          >
-            How it works
-          </a>
-
-          <a
-            href="#about"
-            className="text-sm font-medium text-gray-600 transition hover:text-pink-600"
-          >
-            About
-          </a>
-
-          <a
-            href="#contact"
-            className="text-sm font-medium text-gray-600 transition hover:text-pink-600"
-          >
-            Contact
-          </a>
+        <div className="hidden items-center gap-3 md:flex">
+          {loggedIn ? (
+            <Link
+              to="/dashboard"
+              className="rounded-xl bg-pink-600 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-pink-700"
+            >
+              Open dashboard
+            </Link>
+          ) : (
+            <>
+              <Link
+                to="/login"
+                className="text-sm font-medium text-gray-700 transition hover:text-pink-600"
+              >
+                Log in
+              </Link>
+              <Link
+                to="/register"
+                className="rounded-xl bg-pink-600 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-pink-700"
+              >
+                Get started
+              </Link>
+            </>
+          )}
         </div>
 
-        {/* Actions */}
-        <div className="flex items-center gap-3">
-          <Link
-            to="/login"
-            className="hidden px-4 py-2 text-sm font-semibold text-gray-700 transition hover:text-pink-600 sm:block"
-          >
-            Log in
-          </Link>
+        {/* mobile toggle */}
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          aria-expanded={open}
+          aria-controls="mobile-menu"
+          aria-label={open ? "Close menu" : "Open menu"}
+          className="flex h-10 w-10 items-center justify-center rounded-lg text-gray-700 md:hidden"
+        >
+          <span className="text-2xl leading-none">{open ? "✕" : "☰"}</span>
+        </button>
+      </nav>
 
-          <Link
-            to="/register"
-            className="rounded-full bg-pink-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-pink-700"
-          >
-            Get started
-          </Link>
+      {/* mobile menu */}
+      {open && (
+        <div id="mobile-menu" className="border-t border-gray-100 bg-white px-6 py-4 md:hidden">
+          <ul className="space-y-1">
+            {links.map(([label, href]) => (
+              <li key={href}>
+                <a
+                  href={href}
+                  onClick={close}
+                  className="block rounded-lg px-3 py-2.5 text-sm font-medium text-gray-700 hover:bg-pink-50"
+                >
+                  {label}
+                </a>
+              </li>
+            ))}
+          </ul>
+
+          <div className="mt-4 flex gap-3">
+            {loggedIn ? (
+              <Link
+                to="/dashboard"
+                onClick={close}
+                className="flex-1 rounded-xl bg-pink-600 px-4 py-3 text-center text-sm font-semibold text-white"
+              >
+                Open dashboard
+              </Link>
+            ) : (
+              <>
+                <Link
+                  to="/login"
+                  onClick={close}
+                  className="flex-1 rounded-xl border border-gray-200 px-4 py-3 text-center text-sm font-medium text-gray-700"
+                >
+                  Log in
+                </Link>
+                <Link
+                  to="/register"
+                  onClick={close}
+                  className="flex-1 rounded-xl bg-pink-600 px-4 py-3 text-center text-sm font-semibold text-white"
+                >
+                  Get started
+                </Link>
+              </>
+            )}
+          </div>
         </div>
-
-      </div>
-    </nav>
+      )}
+    </header>
   );
 }
-
-export default Navbar;

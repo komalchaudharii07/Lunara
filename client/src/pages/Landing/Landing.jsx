@@ -1,11 +1,15 @@
+import { Link } from "react-router-dom";
 import Navbar from "../../components/common/Navbar";
 import Features from "../../components/common/Features";
 import HowItWorks from "../../components/common/HowItWorks";
 import About from "../../components/common/About";
 import Contact from "../../components/common/Contact";
 import Footer from "../../components/common/Footer";
+import { getToken } from "../../services/api";
 
 function Landing() {
+  const loggedIn = !!getToken();
+
   return (
     <div className="min-h-screen bg-white">
       <Navbar />
@@ -32,10 +36,13 @@ function Landing() {
               your patterns, and take better care of yourself.
             </p>
 
-            <div className="mt-8 flex justify-center gap-4">
-              <button className="rounded-full bg-pink-600 px-7 py-3.5 font-semibold text-white transition hover:bg-pink-700">
-                Start your journey
-              </button>
+            <div className="mt-8 flex flex-col items-center justify-center gap-4 sm:flex-row">
+              <Link
+                to={loggedIn ? "/dashboard" : "/register"}
+                className="rounded-full bg-pink-600 px-7 py-3.5 font-semibold text-white transition hover:bg-pink-700"
+              >
+                {loggedIn ? "Go to your dashboard" : "Start your journey"}
+              </Link>
 
               <a
                 href="#features"

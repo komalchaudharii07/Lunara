@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import AuthLayout from "../../../layouts/AuthLayout/AuthLayout";
 import loginImage from "../../../assets/login.jpeg";
@@ -13,6 +13,10 @@ export default function ResetPassword() {
   const [loading, setLoading] = useState(false);
   const [done, setDone] = useState(false);
   const [error, setError] = useState("");
+  const timerRef = useRef(null);
+
+  // never redirect after the user has already left the page
+  useEffect(() => () => clearTimeout(timerRef.current), []);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -31,7 +35,7 @@ export default function ResetPassword() {
       setLoading(true);
       await resetPassword(token, password);
       setDone(true);
-      setTimeout(() => navigate("/login"), 2500);
+      timerRef.current = setTimeout(() => navigate("/login"), 2500);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -98,7 +102,17 @@ export default function ResetPassword() {
                   </div>
 
                   {error && (
-                    <p role="alert" className="text-sm text-red-500">{error}</p>
+                    <p role="alert" className="text-sm text-red-500">
+                      {error}
+                      {/expired|invalid/i.test(error) && (
+                        <>
+                          {" "}
+                          <Link to="/forgot-password" className="font-medium underline">
+                            Request a new link
+                          </Link>
+                        </>
+                      )}
+                    </p>
                   )}
 
                   <button

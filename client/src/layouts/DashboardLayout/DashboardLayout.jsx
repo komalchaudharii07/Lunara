@@ -1,17 +1,32 @@
-import { NavLink, Outlet, useNavigate } from "react-router-dom";
-import { useState } from "react";
+import { Link, NavLink, Outlet, useNavigate } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { clearToken } from "../../services/api";
 
 export default function DashboardLayout() {
   const navigate = useNavigate();
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
+  // close the mobile menu with the Escape key
+  useEffect(() => {
+    if (!sidebarOpen) return undefined;
+    const onKeyDown = (e) => {
+      if (e.key === "Escape") setSidebarOpen(false);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [sidebarOpen]);
+
   const navItems = [
     { label: "Dashboard", path: "/dashboard" },
     { label: "Cycle Tracker", path: "/tracker" },
+    { label: "Daily Log", path: "/daily-log" },
     { label: "Insights", path: "/insights" },
     { label: "Lunara AI", path: "/ai-chat" },
     { label: "Community", path: "/community" },
     { label: "Doctors", path: "/doctors" },
+
+    { label: "Appointments", path: "/appointments" },
+    { label: "Report", path: "/report" },
   ];
 
   const bottomItems = [
@@ -20,9 +35,8 @@ export default function DashboardLayout() {
   ];
 
   const handleLogout = () => {
-    localStorage.removeItem("token");
-    sessionStorage.removeItem("token");
-    navigate("/login");
+    clearToken();
+    navigate("/login", { replace: true });
   };
 
   return (
@@ -31,6 +45,7 @@ export default function DashboardLayout() {
       <header className="fixed left-0 right-0 top-0 z-40 flex h-16 items-center justify-between border-b border-[#f1e4e7] bg-white px-5 lg:hidden">
         <button
           onClick={() => setSidebarOpen(true)}
+          aria-label="Open menu"
           className="text-xl text-[#292331]"
         >
           ☰
@@ -53,19 +68,21 @@ export default function DashboardLayout() {
 
       {/* Sidebar */}
       <aside
-        className={`fixed left-0 top-0 z-50 flex h-screen w-64 flex-col border-r border-[#f1e4e7] bg-white px-5 py-6 transition-transform duration-300 lg:translate-x-0 ${sidebarOpen ? "translate-x-0" : "-translate-x-full"
+        className={`fixed left-0 top-0 z-50 flex h-dvh w-64 flex-col border-r border-[#f1e4e7] bg-white px-5 py-6 transition-transform duration-300 lg:translate-x-0 ${sidebarOpen ? "translate-x-0" : "-translate-x-full"
           }`}
       >
         <div className="flex items-center justify-between px-2">
-          <button
-            onClick={() => navigate("/dashboard")}
+          <Link
+            to="/dashboard"
+            onClick={() => setSidebarOpen(false)}
             className="font-serif text-2xl font-semibold text-[#292331]"
           >
             Lunara
-          </button>
+          </Link>
 
           <button
             onClick={() => setSidebarOpen(false)}
+            aria-label="Close menu"
             className="text-gray-500 lg:hidden"
           >
             ✕

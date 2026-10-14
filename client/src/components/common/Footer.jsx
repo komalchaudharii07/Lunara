@@ -1,3 +1,5 @@
+import { Link } from "react-router-dom";
+
 function Footer() {
   return (
     <footer className="border-t border-pink-100 bg-gray-950 text-white">
@@ -79,30 +81,30 @@ function Footer() {
 
             <ul className="mt-5 space-y-3">
               <li>
-                <a
-                  href="/login"
+                <Link
+                  to="/login"
                   className="text-sm text-gray-400 transition hover:text-pink-400"
                 >
                   Log in
-                </a>
+                </Link>
               </li>
 
               <li>
-                <a
-                  href="/register"
+                <Link
+                  to="/register"
                   className="text-sm text-gray-400 transition hover:text-pink-400"
                 >
                   Create account
-                </a>
+                </Link>
               </li>
 
               <li>
-                <a
-                  href="/forgot-password"
+                <Link
+                  to="/forgot-password"
                   className="text-sm text-gray-400 transition hover:text-pink-400"
                 >
                   Forgot password
-                </a>
+                </Link>
               </li>
             </ul>
           </div>
@@ -115,19 +117,19 @@ function Footer() {
           </p>
 
           <div className="flex gap-6">
-            <a
-              href="#"
+            <Link
+              to="/privacy"
               className="text-sm text-gray-500 transition hover:text-pink-400"
             >
               Privacy Policy
-            </a>
+            </Link>
 
-            <a
-              href="#"
+            <Link
+              to="/terms"
               className="text-sm text-gray-500 transition hover:text-pink-400"
             >
               Terms of Service
-            </a>
+            </Link>
           </div>
         </div>
       </div>

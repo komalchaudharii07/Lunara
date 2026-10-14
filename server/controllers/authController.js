@@ -6,11 +6,16 @@ const User = require("../models/User");
 const Cycle = require("../models/Cycle");
 const Chat = require("../models/Chat");
 const Post = require("../models/Post");
+const DailyLog = require("../models/DailyLog");
 const Review = require("../models/Review");
 const sendEmail = require("../utils/sendEmail");
 
 const MIN_PASSWORD = 8;
+const MAX_PASSWORD_BYTES = 72; // bcrypt ignores everything after 72 BYTES
+const BCRYPT_COST = 12;
 const CONSENT_VERSION = "2026-10";
+const RESET_COOLDOWN_MS = 2 * 60 * 1000;
+const RESET_TTL_MS = 15 * 60 * 1000;
 const BLOOD_GROUPS = ["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"];
 const ACTIVITY_LEVELS = [
   "Sedentary",
@@ -19,24 +24,61 @@ const ACTIVITY_LEVELS = [
   "Very Active",
 ];
 
+// Compared against when the email is unknown, so login takes the same time
+// whether or not the account exists.
+const DUMMY_HASH = bcrypt.hashSync("lunara-dummy-password", BCRYPT_COST);
+
 const hashToken = (token) =>
   crypto.createHash("sha256").update(token).digest("hex");
 
-const signToken = (id) =>
-  jwt.sign({ id }, process.env.JWT_SECRET, {
+// tv = token version: raising it on the user signs out every older token
+const signToken = (id, tv = 0) =>
+  jwt.sign({ id, tv }, process.env.JWT_SECRET, {
     expiresIn: "7d",
     algorithm: "HS256",
   });
 
 const isString = (v) => typeof v === "string";
 const isValidEmail = (v) =>
-  isString(v) && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v) && v.length <= 254;
+  isString(v) && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v.trim()) && v.length <= 254;
 
+// length in characters AND bytes (emoji / non-Latin letters use several bytes)
+const passwordProblem = (password) => {
+  if (!isString(password) || password.length < MIN_PASSWORD) {
+    return `Password must be at least ${MIN_PASSWORD} characters`;
+  }
+  if (Buffer.byteLength(password, "utf8") > MAX_PASSWORD_BYTES) {
+    return "Password is too long (max 72 bytes; emoji and some symbols count as more than one)";
+  }
+  return null;
+};
+
+const toNumber = (v) => {
+  if (typeof v === "number") return v;
+  if (typeof v === "string" && v.trim() !== "") return Number(v);
+  return NaN;
+};
+
+// only these fields ever leave the server
 const publicUser = (user) => ({
   id: user._id,
   name: user.name,
   email: user.email,
   age: user.age,
+});
+
+const profileUser = (user) => ({
+  id: user._id,
+  name: user.name,
+  email: user.email,
+  age: user.age,
+  height: user.height,
+  weight: user.weight,
+  bloodGroup: user.bloodGroup,
+  phone: user.phone,
+  location: user.location,
+  activityLevel: user.activityLevel,
+  aiConsent: !!user.aiConsent,
 });
 
 // REGISTER
@@ -52,24 +94,16 @@ const register = async (req, res) => {
       return res.status(400).json({ message: "Please enter a valid email" });
     }
 
-    if (!isString(password) || password.length < MIN_PASSWORD) {
-      return res.status(400).json({
-        message: `Password must be at least ${MIN_PASSWORD} characters`,
-      });
+    const pwProblem = passwordProblem(password);
+    if (pwProblem) {
+      return res.status(400).json({ message: pwProblem });
     }
 
-    if (password.length > 72) {
-      // bcrypt ignores everything after 72 bytes
-      return res
-        .status(400)
-        .json({ message: "Password must be 72 characters or fewer" });
-    }
-
-    const ageNumber = Number(age);
+    const ageNumber = toNumber(age);
     if (!Number.isInteger(ageNumber) || ageNumber < 10 || ageNumber > 100) {
       return res
         .status(400)
-        .json({ message: "Age must be a number between 10 and 100" });
+        .json({ message: "Age must be a whole number between 10 and 100" });
     }
 
     if (acceptedTerms !== true) {
@@ -85,7 +119,7 @@ const register = async (req, res) => {
       return res.status(409).json({ message: "User already exists" });
     }
 
-    const hashedPassword = await bcrypt.hash(password, 10);
+    const hashedPassword = await bcrypt.hash(password, BCRYPT_COST);
 
     const user = await User.create({
       name: name.trim(),
@@ -98,7 +132,7 @@ const register = async (req, res) => {
 
     res.status(201).json({
       message: "Registration successful",
-      token: signToken(user._id),
+      token: signToken(user._id, 0),
       user: publicUser(user),
     });
   } catch (error) {
@@ -123,21 +157,24 @@ const login = async (req, res) => {
         .json({ message: "Email and password are required" });
     }
 
-    const user = await User.findOne({ email: email.trim().toLowerCase() });
+    // password has select:false in the model, so it must be asked for
+    const user = await User.findOne({
+      email: email.trim().toLowerCase(),
+    }).select("+password");
 
-    if (!user) {
-      return res.status(401).json({ message: "Invalid email or password" });
-    }
+    // always run bcrypt so response time doesn't reveal if the email exists
+    const isMatch = await bcrypt.compare(
+      password,
+      user ? user.password : DUMMY_HASH
+    );
 
-    const isMatch = await bcrypt.compare(password, user.password);
-
-    if (!isMatch) {
+    if (!user || !isMatch) {
       return res.status(401).json({ message: "Invalid email or password" });
     }
 
     res.json({
       message: "Login successful",
-      token: signToken(user._id),
+      token: signToken(user._id, user.tokenVersion ?? 0),
       user: publicUser(user),
     });
   } catch (error) {
@@ -149,13 +186,13 @@ const login = async (req, res) => {
 // GET CURRENT USER
 const getMe = async (req, res) => {
   try {
-    const user = await User.findById(req.user).select("-password");
+    const user = await User.findById(req.user);
 
     if (!user) {
       return res.status(404).json({ message: "User not found" });
     }
 
-    res.json({ user });
+    res.json({ user: profileUser(user) });
   } catch (error) {
     console.error("GetMe error:", error);
     res.status(500).json({ message: "Failed to get user" });
@@ -199,11 +236,17 @@ const updateProfile = async (req, res) => {
         continue;
       }
 
-      const value = Number(body[field]);
-      if (!Number.isFinite(value) || value < min || value > max) {
-        return res
-          .status(400)
-          .json({ message: `${field} must be between ${min} and ${max}` });
+      const value = toNumber(body[field]);
+      const valid =
+        field === "age" ? Number.isInteger(value) : Number.isFinite(value);
+
+      if (!valid || value < min || value > max) {
+        return res.status(400).json({
+          message:
+            field === "age"
+              ? `age must be a whole number between ${min} and ${max}`
+              : `${field} must be between ${min} and ${max}`,
+        });
       }
       set[field] = value;
     }
@@ -235,6 +278,9 @@ const updateProfile = async (req, res) => {
       if (body[field] === null || body[field] === "") {
         unset[field] = 1;
       } else if (isString(body[field]) && body[field].trim().length <= max) {
+        if (field === "phone" && !/^[+\d][\d\s()-]{5,19}$/.test(body[field].trim())) {
+          return res.status(400).json({ message: "Invalid phone number" });
+        }
         set[field] = body[field].trim();
       } else {
         return res.status(400).json({ message: `Invalid ${field}` });
@@ -252,13 +298,16 @@ const updateProfile = async (req, res) => {
     const user = await User.findByIdAndUpdate(req.user, update, {
       new: true,
       runValidators: true,
-    }).select("-password");
+    });
 
     if (!user) {
       return res.status(404).json({ message: "User not found" });
     }
 
-    res.json({ message: "Profile updated successfully", user });
+    res.json({
+      message: "Profile updated successfully",
+      user: profileUser(user),
+    });
   } catch (error) {
     console.error("Update profile error:", error);
     res.status(500).json({ message: "Profile update failed" });
@@ -276,10 +325,9 @@ const changePassword = async (req, res) => {
       });
     }
 
-    if (newPassword.length < MIN_PASSWORD || newPassword.length > 72) {
-      return res.status(400).json({
-        message: `New password must be ${MIN_PASSWORD} to 72 characters`,
-      });
+    const pwProblem = passwordProblem(newPassword);
+    if (pwProblem) {
+      return res.status(400).json({ message: pwProblem });
     }
 
     if (newPassword === currentPassword) {
@@ -288,7 +336,7 @@ const changePassword = async (req, res) => {
       });
     }
 
-    const user = await User.findById(req.user);
+    const user = await User.findById(req.user).select("+password");
 
     if (!user) {
       return res.status(404).json({ message: "User not found" });
@@ -297,19 +345,22 @@ const changePassword = async (req, res) => {
     const isMatch = await bcrypt.compare(currentPassword, user.password);
 
     if (!isMatch) {
+      // 400, not 401: a typo must not log the user out
       return res
         .status(400)
         .json({ message: "Current password is incorrect" });
     }
 
-    user.password = await bcrypt.hash(newPassword, 10);
-    user.passwordChangedAt = new Date();
+    user.password = await bcrypt.hash(newPassword, BCRYPT_COST);
+    // small offset so the token issued below is never older than this stamp
+    user.passwordChangedAt = new Date(Date.now() - 1000);
+    user.tokenVersion = (user.tokenVersion ?? 0) + 1;
     await user.save();
 
     // old tokens are now invalid, so hand back a fresh one
     res.json({
       message: "Password changed successfully",
-      token: signToken(user._id),
+      token: signToken(user._id, user.tokenVersion),
     });
   } catch (error) {
     console.error("Change password error:", error);
@@ -330,35 +381,47 @@ const forgotPassword = async (req, res) => {
       return res.status(400).json({ message: "Please enter a valid email" });
     }
 
-    const user = await User.findOne({ email: email.trim().toLowerCase() });
+    const user = await User.findOne({
+      email: email.trim().toLowerCase(),
+    }).select("+resetPasswordExpires");
 
-    if (user) {
+    // cooldown: a token created in the last 2 minutes means we already emailed
+    const recentlySent =
+      user?.resetPasswordExpires &&
+      user.resetPasswordExpires.getTime() - Date.now() >
+        RESET_TTL_MS - RESET_COOLDOWN_MS;
+
+    if (user && !recentlySent) {
       const token = crypto.randomBytes(32).toString("hex");
 
       user.resetPasswordToken = hashToken(token);
-      user.resetPasswordExpires = Date.now() + 15 * 60 * 1000; // 15 minutes
+      user.resetPasswordExpires = new Date(Date.now() + RESET_TTL_MS);
       await user.save({ validateBeforeSave: false });
 
       const clientUrl = process.env.CLIENT_URL.split(",")[0].trim();
       const link = `${clientUrl}/reset-password/${token}`;
 
-      try {
-        await sendEmail({
-          to: user.email,
-          subject: "Reset your Lunara password",
-          text: `Reset your password using this link (valid for 15 minutes): ${link}\n\nIf you didn't request this, you can ignore this email.`,
-          html: `<p>Hi,</p>
+      // NOT awaited: otherwise existing accounts respond slower than unknown ones
+      sendEmail({
+        to: user.email,
+        subject: "Reset your Lunara password",
+        text: `Reset your password using this link (valid for 15 minutes): ${link}\n\nIf you didn't request this, you can ignore this email.`,
+        html: `<p>Hi,</p>
 <p>Click the button below to reset your Lunara password. This link is valid for 15 minutes.</p>
 <p><a href="${link}" style="background:#e58da4;color:#fff;padding:12px 20px;border-radius:10px;text-decoration:none;display:inline-block">Reset password</a></p>
 <p>If you didn't request this, you can safely ignore this email.</p>`,
-        });
-      } catch (mailError) {
+      }).catch(async (mailError) => {
         // don't keep a token the user never received
-        user.resetPasswordToken = undefined;
-        user.resetPasswordExpires = undefined;
-        await user.save({ validateBeforeSave: false });
         console.error("Reset email failed:", mailError.message);
-      }
+        try {
+          await User.updateOne(
+            { _id: user._id },
+            { $unset: { resetPasswordToken: 1, resetPasswordExpires: 1 } }
+          );
+        } catch (cleanupError) {
+          console.error("Reset token cleanup failed:", cleanupError.message);
+        }
+      });
     }
 
     res.json({ message: genericMessage });
@@ -374,19 +437,14 @@ const resetPassword = async (req, res) => {
     const { password } = req.body;
     const { token } = req.params;
 
-    if (
-      !isString(password) ||
-      password.length < MIN_PASSWORD ||
-      password.length > 72
-    ) {
-      return res.status(400).json({
-        message: `Password must be ${MIN_PASSWORD} to 72 characters`,
-      });
+    const pwProblem = passwordProblem(password);
+    if (pwProblem) {
+      return res.status(400).json({ message: pwProblem });
     }
 
     const user = await User.findOne({
       resetPasswordToken: hashToken(String(token)),
-      resetPasswordExpires: { $gt: Date.now() },
+      resetPasswordExpires: { $gt: new Date() },
     }).select("+resetPasswordToken +resetPasswordExpires");
 
     if (!user) {
@@ -395,8 +453,9 @@ const resetPassword = async (req, res) => {
         .json({ message: "This reset link is invalid or has expired" });
     }
 
-    user.password = await bcrypt.hash(password, 10);
+    user.password = await bcrypt.hash(password, BCRYPT_COST);
     user.passwordChangedAt = new Date();
+    user.tokenVersion = (user.tokenVersion ?? 0) + 1;
     user.resetPasswordToken = undefined;
     user.resetPasswordExpires = undefined;
     await user.save();
@@ -417,7 +476,7 @@ const deleteAccount = async (req, res) => {
       return res.status(400).json({ message: "Password is required" });
     }
 
-    const user = await User.findById(req.user);
+    const user = await User.findById(req.user).select("+password");
 
     if (!user) {
       return res.status(404).json({ message: "User not found" });
@@ -431,10 +490,15 @@ const deleteAccount = async (req, res) => {
 
     await Promise.all([
       Cycle.deleteMany({ user: user._id }),
+      DailyLog.deleteMany({ user: user._id }),
       Chat.deleteMany({ user: user._id }),
       Review.deleteMany({ user: user._id }),
       Post.deleteMany({ user: user._id }),
       Post.updateMany({ likes: user._id }, { $pull: { likes: user._id } }),
+      Post.updateMany(
+        { "reports.user": user._id },
+        { $pull: { reports: { user: user._id } } }
+      ),
     ]);
 
     await User.deleteOne({ _id: user._id });
@@ -442,7 +506,95 @@ const deleteAccount = async (req, res) => {
     res.json({ message: "Your account and data have been deleted" });
   } catch (error) {
     console.error("Delete account error:", error);
-    res.status(500).json({ message: "Failed to delete account" });
+    res.status(500).json({
+      message:
+        "Failed to delete account. Some data may remain; please try again.",
+    });
+  }
+};
+
+// TURN LUNARA AI ON / OFF (nothing is sent to Gemini until the user agrees)
+const setAiConsent = async (req, res) => {
+  try {
+    const { consent } = req.body;
+
+    if (typeof consent !== "boolean") {
+      return res.status(400).json({ message: "consent must be true or false" });
+    }
+
+    const user = await User.findByIdAndUpdate(
+      req.user,
+      consent
+        ? { $set: { aiConsent: true, aiConsentAt: new Date() } }
+        : { $set: { aiConsent: false }, $unset: { aiConsentAt: 1 } },
+      { new: true }
+    );
+
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    res.json({
+      message: consent ? "Lunara AI is on" : "Lunara AI is off",
+      aiConsent: !!user.aiConsent,
+    });
+  } catch (error) {
+    console.error("AI consent error:", error);
+    res.status(500).json({ message: "Failed to update the setting" });
+  }
+};
+
+// LOG OUT EVERY OTHER DEVICE (this device gets a fresh token)
+const logoutOtherDevices = async (req, res) => {
+  try {
+    const user = await User.findByIdAndUpdate(
+      req.user,
+      { $inc: { tokenVersion: 1 } },
+      { new: true }
+    );
+
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    res.json({
+      message: "Logged out of all other devices",
+      token: signToken(user._id, user.tokenVersion),
+    });
+  } catch (error) {
+    console.error("Logout all error:", error);
+    res.status(500).json({ message: "Something went wrong" });
+  }
+};
+
+// EXPORT ALL MY DATA (JSON)
+const exportData = async (req, res) => {
+  try {
+    const [user, cycles, dailyLogs, chats, posts] = await Promise.all([
+      User.findById(req.user),
+      Cycle.find({ user: req.user }).sort({ periodStartDate: 1 }).lean(),
+      DailyLog.find({ user: req.user }).sort({ date: 1 }).lean(),
+      Chat.find({ user: req.user }).sort({ createdAt: 1 }).lean(),
+      Post.find({ user: req.user }).sort({ createdAt: 1 }).lean(),
+    ]);
+
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    const strip = ({ __v, user: _u, ...rest }) => rest;
+
+    res.json({
+      exportedAt: new Date().toISOString(),
+      profile: profileUser(user),
+      cycles: cycles.map(strip),
+      dailyLogs: dailyLogs.map(strip),
+      chats: chats.map(strip),
+      posts: posts.map(({ likes, reports, ...p }) => strip(p)),
+    });
+  } catch (error) {
+    console.error("Export error:", error);
+    res.status(500).json({ message: "Failed to export your data" });
   }
 };
 
@@ -455,4 +607,7 @@ module.exports = {
   forgotPassword,
   resetPassword,
   deleteAccount,
+  setAiConsent,
+  logoutOtherDevices,
+  exportData,
 };

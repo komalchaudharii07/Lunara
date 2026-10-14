@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   MapContainer,
   TileLayer,
@@ -46,7 +46,18 @@ const healthcareIcon = new L.DivIcon({
   popupAnchor: [0, -18],
 });
 
-function LocationUpdater({ location, zoom = 14 }) {
+// OpenStreetMap data can be edited by anyone, so only allow real web links
+const safeUrl = (value) => {
+  if (!value) return "";
+  try {
+    const url = new URL(/^https?:\/\//i.test(value) ? value : `https://${value}`);
+    return url.protocol === "http:" || url.protocol === "https:" ? url.href : "";
+  } catch {
+    return "";
+  }
+};
+
+function LocationUpdater({ location, zoom = 12 }) {
   const map = useMap();
 
   useEffect(() => {
@@ -74,38 +85,39 @@ export default function NearbyMap({ careType }) {
 
   const [radius, setRadius] = useState(null);
   const [error, setError] = useState("");
+  const requestId = useRef(0);
 
   const getHealthcareQuery = () => {
     if (careType === "pcos") {
       return `
-        nwr["amenity"="doctors"](around:R,LAT,LON);
-        nwr["amenity"="clinic"](around:R,LAT,LON);
-        nwr["amenity"="hospital"](around:R,LAT,LON);
+        nwr["amenity"="doctors"](around:__RADIUS__,__LAT__,__LON__);
+        nwr["amenity"="clinic"](around:__RADIUS__,__LAT__,__LON__);
+        nwr["amenity"="hospital"](around:__RADIUS__,__LAT__,__LON__);
       `;
     }
 
     if (careType === "pregnancy") {
       return `
-        nwr["amenity"="doctors"](around:R,LAT,LON);
-        nwr["amenity"="clinic"](around:R,LAT,LON);
-        nwr["amenity"="hospital"](around:R,LAT,LON);
-        nwr["healthcare:speciality"~"obstetrics|gynaecology|gynecology|fertility",i](around:R,LAT,LON);
+        nwr["amenity"="doctors"](around:__RADIUS__,__LAT__,__LON__);
+        nwr["amenity"="clinic"](around:__RADIUS__,__LAT__,__LON__);
+        nwr["amenity"="hospital"](around:__RADIUS__,__LAT__,__LON__);
+        nwr["healthcare:speciality"~"obstetrics|gynaecology|gynecology|fertility",i](around:__RADIUS__,__LAT__,__LON__);
       `;
     }
 
     if (careType === "periods") {
       return `
-        nwr["amenity"="doctors"](around:R,LAT,LON);
-        nwr["amenity"="clinic"](around:R,LAT,LON);
-        nwr["amenity"="hospital"](around:R,LAT,LON);
-        nwr["healthcare:speciality"~"gynaecology|gynecology",i](around:R,LAT,LON);
+        nwr["amenity"="doctors"](around:__RADIUS__,__LAT__,__LON__);
+        nwr["amenity"="clinic"](around:__RADIUS__,__LAT__,__LON__);
+        nwr["amenity"="hospital"](around:__RADIUS__,__LAT__,__LON__);
+        nwr["healthcare:speciality"~"gynaecology|gynecology",i](around:__RADIUS__,__LAT__,__LON__);
       `;
     }
 
     return `
-      nwr["amenity"="doctors"](around:R,LAT,LON);
-      nwr["amenity"="clinic"](around:R,LAT,LON);
-      nwr["amenity"="hospital"](around:R,LAT,LON);
+      nwr["amenity"="doctors"](around:__RADIUS__,__LAT__,__LON__);
+      nwr["amenity"="clinic"](around:__RADIUS__,__LAT__,__LON__);
+      nwr["amenity"="hospital"](around:__RADIUS__,__LAT__,__LON__);
     `;
   };
 
@@ -113,6 +125,7 @@ export default function NearbyMap({ careType }) {
     latitude,
     longitude
   ) => {
+    const myRequest = ++requestId.current;
     setPlacesLoading(true);
     setError("");
     setPlaces([]);
@@ -126,12 +139,14 @@ export default function NearbyMap({ careType }) {
       "https://overpass.private.coffee/api/interpreter",
     ];
 
+    let anyRequestWorked = false;
+
     try {
       for (const currentRadius of radii) {
         const healthcareQuery = getHealthcareQuery()
-          .replaceAll("R", currentRadius)
-          .replaceAll("LAT", latitude)
-          .replaceAll("LON", longitude);
+          .replaceAll("__RADIUS__", currentRadius)
+          .replaceAll("__LAT__", latitude)
+          .replaceAll("__LON__", longitude);
 
         const query = `
           [out:json][timeout:30];
@@ -168,6 +183,8 @@ export default function NearbyMap({ careType }) {
         if (!data) {
           continue;
         }
+
+        anyRequestWorked = true;
 
         const healthcarePlaces = data.elements
           .map((place) => {
@@ -213,10 +230,7 @@ export default function NearbyMap({ careType }) {
                 tags["contact:phone"] ||
                 "",
 
-              website:
-                tags.website ||
-                tags["contact:website"] ||
-                "",
+              website: safeUrl(tags.website || tags["contact:website"]),
 
               specialty:
                 tags["healthcare:speciality"] ||
@@ -231,6 +245,9 @@ export default function NearbyMap({ careType }) {
           })
           .filter(Boolean);
 
+        // a newer search has started: ignore this older answer
+        if (myRequest !== requestId.current) return;
+
         if (healthcarePlaces.length > 0) {
           setPlaces(healthcarePlaces);
           setRadius(currentRadius / 1000);
@@ -239,9 +256,13 @@ export default function NearbyMap({ careType }) {
         }
       }
 
+      if (myRequest !== requestId.current) return;
+
       setPlaces([]);
       setError(
-        "No healthcare places were found within 25 km."
+        anyRequestWorked
+          ? "No healthcare places were found within 25 km."
+          : "The map service isn't responding right now. Please try again in a moment."
       );
     } catch (err) {
       console.error(err);
@@ -250,7 +271,7 @@ export default function NearbyMap({ careType }) {
         "Unable to load nearby healthcare places right now."
       );
     } finally {
-      setPlacesLoading(false);
+      if (myRequest === requestId.current) setPlacesLoading(false);
     }
   };
 
@@ -287,17 +308,21 @@ export default function NearbyMap({ careType }) {
           longitude
         );
       },
-      () => {
+      (geoError) => {
         setError(
-          "Location access was denied. Please allow location permission."
+          geoError?.code === 1
+            ? "Location access was denied. Please allow location permission."
+            : geoError?.code === 3
+            ? "Finding your location took too long. Try again or search for a place."
+            : "Couldn't work out your location. Try searching for a place instead."
         );
 
         setLoading(false);
       },
       {
-        enableHighAccuracy: true,
+        enableHighAccuracy: false,
         timeout: 10000,
-        maximumAge: 0,
+        maximumAge: 60000,
       }
     );
   };
@@ -491,7 +516,7 @@ export default function NearbyMap({ careType }) {
 
           <button
             onClick={searchLocation}
-            disabled={searchingLocation}
+            disabled={searchingLocation || placesLoading}
             className="h-11 rounded-xl bg-[#292331] px-5 text-sm font-semibold text-white transition hover:bg-[#3b3444] disabled:opacity-60"
           >
             {searchingLocation

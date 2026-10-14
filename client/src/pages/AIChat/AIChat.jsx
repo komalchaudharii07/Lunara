@@ -3,6 +3,8 @@ import {
   askLunaraAI,
   getChatHistory,
   clearChatHistory,
+  getCurrentUser,
+  setAiConsent,
 } from "../../services/api";
 
 export default function AIChat() {
@@ -12,37 +14,58 @@ export default function AIChat() {
   const [sending, setSending] = useState(false);
   const [clearing, setClearing] = useState(false);
 
+  // null = still checking, true = Lunara AI is on, false = needs permission
+  const [consent, setConsent] = useState(null);
+  const [consentSaving, setConsentSaving] = useState(false);
+  const [consentError, setConsentError] = useState("");
+
   const messagesEndRef = useRef(null);
 
-  const getToken = () =>
-    localStorage.getItem("token") ||
-    sessionStorage.getItem("token");
+  const [historyError, setHistoryError] = useState("");
 
   useEffect(() => {
+    let ignore = false;
+
     const loadChatHistory = async () => {
       try {
-        const token = getToken();
-
-        if (!token) {
-          return;
-        }
-
-        const data = await getChatHistory(token);
+        // the token is attached by api.js; an expired session goes to /login there
+        const data = await getChatHistory();
+        if (ignore) return;
 
         setMessages(
           (data.chats || []).map((chat) => ({
+            id: chat._id,
             role: chat.role,
             text: chat.message,
           }))
         );
-      } catch (error) {
-        console.error("Chat history error:", error);
+      } catch {
+        if (!ignore) {
+          setHistoryError(
+            "Couldn't load your earlier messages. Please refresh to try again."
+          );
+        }
       } finally {
-        setLoading(false);
+        if (!ignore) setLoading(false);
+      }
+    };
+
+    const loadConsent = async () => {
+      try {
+        const data = await getCurrentUser();
+        if (!ignore) setConsent(!!data.user?.aiConsent);
+      } catch {
+        // unknown: the server still enforces consent, so default to asking
+        if (!ignore) setConsent(false);
       }
     };
 
     loadChatHistory();
+    loadConsent();
+
+    return () => {
+      ignore = true;
+    };
   }, []);
 
   useEffect(() => {
@@ -51,62 +74,62 @@ export default function AIChat() {
     });
   }, [messages, sending]);
 
+  const handleEnableAi = async () => {
+    setConsentSaving(true);
+    setConsentError("");
+
+    try {
+      await setAiConsent(true);
+      setConsent(true);
+    } catch (error) {
+      setConsentError(error.message || "Couldn't turn on Lunara AI.");
+    } finally {
+      setConsentSaving(false);
+    }
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
 
     const trimmedMessage = message.trim();
 
-    if (!trimmedMessage || sending) {
+    if (!trimmedMessage || sending || consent !== true) {
       return;
     }
 
-    const token = getToken();
-
-    if (!token) {
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: "ai",
-          text: "Please login again to continue using Lunara AI.",
-        },
-      ]);
-      return;
-    }
+    const tempId = `tmp-${Date.now()}`;
 
     setMessages((prev) => [
       ...prev,
-      {
-        role: "user",
-        text: trimmedMessage,
-      },
+      { id: tempId, role: "user", text: trimmedMessage },
     ]);
 
     setMessage("");
     setSending(true);
 
     try {
-      const data = await askLunaraAI(
-        trimmedMessage,
-        token
-      );
+      const data = await askLunaraAI(trimmedMessage);
 
       setMessages((prev) => [
         ...prev,
-        {
-          role: "ai",
-          text: data.reply,
-        },
+        { id: `ai-${Date.now()}`, role: "ai", text: data.reply },
       ]);
     } catch (error) {
+      if (error.code === "AI_CONSENT_REQUIRED") setConsent(false);
+
+      // the server saves nothing when a request fails, so drop the question,
+      // show what went wrong, and give the text back so it isn't lost
       setMessages((prev) => [
-        ...prev,
+        ...prev.filter((item) => item.id !== tempId),
         {
+          id: `err-${Date.now()}`,
           role: "ai",
+          error: true,
           text:
-            error.message ||
-            "Something went wrong. Please try again.",
+            error.message || "Something went wrong. Please try again.",
         },
       ]);
+      setMessage(trimmedMessage);
     } finally {
       setSending(false);
     }
@@ -125,21 +148,14 @@ export default function AIChat() {
       return;
     }
 
-    const token = getToken();
-
-    if (!token) {
-      return;
-    }
-
     setClearing(true);
 
     try {
-      await clearChatHistory(token);
+      await clearChatHistory();
       setMessages([]);
+      setHistoryError("");
     } catch (error) {
-      window.alert(
-        error.message || "Failed to clear chat history"
-      );
+      setHistoryError(error.message || "Failed to clear chat history");
     } finally {
       setClearing(false);
     }
@@ -195,7 +211,10 @@ export default function AIChat() {
             </div>
           </div>
 
-          <div className="flex-1 space-y-5 overflow-y-auto p-6">
+          <div
+            aria-live="polite"
+            className="flex-1 space-y-5 overflow-y-auto p-6"
+          >
             {loading ? (
               <div className="flex min-h-[45vh] items-center justify-center">
                 <p className="text-sm text-gray-400">
@@ -242,7 +261,7 @@ export default function AIChat() {
             ) : (
               messages.map((item, index) => (
                 <div
-                  key={index}
+                  key={item.id ?? index}
                   className={`flex ${item.role === "user"
                       ? "justify-end"
                       : "justify-start"
@@ -251,6 +270,8 @@ export default function AIChat() {
                   <div
                     className={`max-w-[85%] rounded-2xl px-5 py-4 text-sm leading-6 ${item.role === "user"
                         ? "rounded-br-md bg-[#e58da4] text-white"
+                        : item.error
+                        ? "rounded-bl-md bg-red-50 text-red-600"
                         : "rounded-bl-md bg-[#fff5f7] text-[#4b4550]"
                       }`}
                   >
@@ -268,10 +289,51 @@ export default function AIChat() {
               </div>
             )}
 
+            {historyError && (
+              <p role="alert" className="text-center text-sm text-red-500">
+                {historyError}
+              </p>
+            )}
+
             <div ref={messagesEndRef} />
           </div>
 
           <div className="border-t border-[#f1e4e7] p-5">
+            {consent === false && (
+              <div className="mb-4 rounded-2xl bg-[#fff5f7] p-5">
+                <h3 className="text-sm font-semibold text-[#292331]">
+                  Turn on Lunara AI
+                </h3>
+
+                <p className="mt-2 text-xs leading-5 text-gray-500">
+                  To answer you, Lunara sends your messages, your recent cycle
+                  records and your recent daily logs to Google Gemini. Nothing
+                  is sent until you turn this on, and you can turn it off any
+                  time in Settings.
+                </p>
+
+                <p className="mt-2 text-xs leading-5 text-gray-500">
+                  In an emergency call 112. If you are struggling, Tele-MANAS
+                  is free at 14416.
+                </p>
+
+                {consentError && (
+                  <p role="alert" className="mt-2 text-xs text-red-500">
+                    {consentError}
+                  </p>
+                )}
+
+                <button
+                  type="button"
+                  onClick={handleEnableAi}
+                  disabled={consentSaving}
+                  className="mt-4 rounded-xl bg-[#e58da4] px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-[#d97d96] disabled:opacity-60"
+                >
+                  {consentSaving ? "Turning on..." : "Turn on Lunara AI"}
+                </button>
+              </div>
+            )}
+
             <form
               onSubmit={handleSubmit}
               className="flex gap-3"
@@ -283,13 +345,16 @@ export default function AIChat() {
                   setMessage(e.target.value)
                 }
                 placeholder="Ask Lunara something..."
-                className="h-12 min-w-0 flex-1 rounded-xl border border-[#eadde1] bg-[#fffafb] px-4 text-sm text-[#292331] outline-none transition placeholder:text-gray-400 focus:border-[#e58da4]"
+                maxLength={2000}
+                disabled={consent !== true}
+                aria-label="Message Lunara"
+                className="h-12 min-w-0 flex-1 rounded-xl border border-[#eadde1] bg-[#fffafb] px-4 text-sm text-[#292331] outline-none transition placeholder:text-gray-400 focus:border-[#e58da4] disabled:cursor-not-allowed disabled:opacity-60"
               />
 
               <button
                 type="submit"
                 disabled={
-                  sending || !message.trim()
+                  sending || !message.trim() || consent !== true
                 }
                 className="h-12 rounded-xl bg-[#e58da4] px-6 text-sm font-semibold text-white transition hover:bg-[#d97d96] disabled:cursor-not-allowed disabled:opacity-50"
               >
@@ -297,9 +362,11 @@ export default function AIChat() {
               </button>
             </form>
 
-            <p className="mt-3 text-center text-[11px] leading-5 text-gray-400">
+            <p className="mt-3 text-center text-xs leading-5 text-gray-500">
               Lunara AI provides general information and
-              does not replace professional medical advice.
+              does not replace professional medical advice. In an emergency,
+              call 112. Your messages, recent cycle data and daily logs are sent to
+              Google Gemini to generate replies.
             </p>
           </div>
         </div>
