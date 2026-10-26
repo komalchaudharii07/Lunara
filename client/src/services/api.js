@@ -1,8 +1,9 @@
 // In production the API address MUST be set at build time (VITE_API_URL).
 // Falling back to localhost there would make every call fail silently.
-const API_URL =
+const API_URL = (
   import.meta.env.VITE_API_URL ||
-  (import.meta.env.DEV ? "http://localhost:5000/api" : "");
+  (import.meta.env.DEV ? "http://localhost:5000/api" : "")
+).replace(/\/+$/, ""); // no trailing slash, so paths never become //auth/login
 
 if (!API_URL) {
   throw new Error("VITE_API_URL is not set. Add it to your production build.");
@@ -13,6 +14,9 @@ const SESSION_EXPIRED_KEY = "lunara_session_expired";
 
 export const getToken = () =>
   localStorage.getItem("token") || sessionStorage.getItem("token");
+
+// true when "remember me" was chosen (the token lives in localStorage)
+export const isRemembered = () => !!localStorage.getItem("token");
 
 export const clearToken = () => {
   localStorage.removeItem("token");
@@ -33,7 +37,13 @@ export const localDateKey = (date = new Date()) => {
 // Single place for every API call
 async function request(
   path,
-  { method = "GET", body, auth = true, timeout = DEFAULT_TIMEOUT_MS } = {}
+  {
+    method = "GET",
+    body,
+    auth = true,
+    timeout = DEFAULT_TIMEOUT_MS,
+    logoutOn401 = auth, // a wrong-password 401 must not end the session
+  } = {}
 ) {
   const headers = {};
 
@@ -80,7 +90,7 @@ async function request(
 
   if (!response.ok) {
     // Expired or invalid session on a protected call: log out once
-    if (response.status === 401 && auth) {
+    if (response.status === 401 && logoutOn401) {
       clearToken();
       try {
         sessionStorage.setItem(SESSION_EXPIRED_KEY, "1");
@@ -133,7 +143,11 @@ export const updateProfile = (profileData) =>
   request("/auth/profile", { method: "PUT", body: profileData });
 
 export const changePassword = (passwordData) =>
-  request("/auth/change-password", { method: "PUT", body: passwordData });
+  request("/auth/change-password", {
+    method: "PUT",
+    body: passwordData,
+    logoutOn401: false,
+  });
 
 // CYCLES
 export const createCycle = (cycleData) =>
@@ -203,6 +217,22 @@ export const reportPost = (postId, reason) =>
 // DOCTORS AND REVIEWS
 export const getDoctors = () => request("/doctors");
 
+// a doctor's own profile
+export const getMyDoctorProfile = () => request("/doctors/me/profile");
+
+export const updateMyDoctorProfile = (profile) =>
+  request("/doctors/me/profile", { method: "PUT", body: profile });
+
+// admin: approve or reject doctors
+export const getDoctorsForReview = (status = "pending") =>
+  request(`/doctors/admin/review?status=${encodeURIComponent(status)}`);
+
+export const reviewDoctor = (doctorId, decision, note = "") =>
+  request(`/doctors/admin/${encodeURIComponent(doctorId)}/review`, {
+    method: "PATCH",
+    body: { decision, note },
+  });
+
 export const getDoctor = (doctorId) =>
   request(`/doctors/${encodeURIComponent(doctorId)}`);
 
@@ -234,7 +264,11 @@ export const sendContactMessage = (data) =>
   request("/contact", { method: "POST", body: data, auth: false });
 
 export const deleteAccount = (password) =>
-  request("/auth/me", { method: "DELETE", body: { password } });
+  request("/auth/me", {
+    method: "DELETE",
+    body: { password },
+    logoutOn401: false,
+  });
 
 // PRIVACY AND ACCOUNT
 export const setAiConsent = (consent) =>
@@ -256,6 +290,16 @@ export const bookAppointment = (body) =>
   request("/appointments", { method: "POST", body });
 
 export const getMyAppointments = () => request("/appointments/mine");
+
+// prescriptions: the doctor writes, the patient (and that doctor) reads
+export const savePrescription = (appointmentId, data) =>
+  request(`/appointments/${encodeURIComponent(appointmentId)}/prescription`, {
+    method: "PUT",
+    body: data,
+  });
+
+export const getPrescription = (appointmentId) =>
+  request(`/appointments/${encodeURIComponent(appointmentId)}/prescription`);
 
 export const cancelAppointment = (id) =>
   request(`/appointments/${encodeURIComponent(id)}/cancel`, { method: "PATCH" });

@@ -251,7 +251,6 @@ export default function NearbyMap({ careType }) {
         if (healthcarePlaces.length > 0) {
           setPlaces(healthcarePlaces);
           setRadius(currentRadius / 1000);
-          setPlacesLoading(false);
           return;
         }
       }
@@ -267,9 +266,9 @@ export default function NearbyMap({ careType }) {
     } catch (err) {
       console.error(err);
 
-      setError(
-        "Unable to load nearby healthcare places right now."
-      );
+      if (myRequest === requestId.current) {
+        setError("Unable to load nearby healthcare places right now.");
+      }
     } finally {
       if (myRequest === requestId.current) setPlacesLoading(false);
     }
@@ -401,7 +400,7 @@ export default function NearbyMap({ careType }) {
   };
 
   return (
-    <div className="relative h-[520px] overflow-hidden rounded-3xl border border-[#eadde1] bg-[#fdf5f7]">
+    <div className="relative h-130 overflow-hidden rounded-3xl border border-[#eadde1] bg-[#fdf5f7]">
 
       <MapContainer
         center={[20.5937, 78.9629]}
@@ -444,7 +443,7 @@ export default function NearbyMap({ careType }) {
             icon={healthcareIcon}
           >
             <Popup>
-              <div className="min-w-[230px]">
+              <div className="min-w-57.5">
                 <p className="text-sm font-semibold text-[#292331]">
                   {place.name}
                 </p>
@@ -492,7 +491,7 @@ export default function NearbyMap({ careType }) {
       </MapContainer>
 
       {/* SEARCH PANEL */}
-      <div className="absolute left-4 right-4 top-4 z-[1000] rounded-2xl border border-white/70 bg-white/95 p-4 shadow-lg backdrop-blur">
+      <div className="absolute left-4 right-4 top-4 z-1000 rounded-2xl border border-white/70 bg-white/95 p-4 shadow-lg backdrop-blur">
 
         <p className="text-sm font-semibold text-[#292331]">
           Where should we find care? 💗
@@ -506,15 +505,17 @@ export default function NearbyMap({ careType }) {
               setLocationInput(e.target.value)
             }
             onKeyDown={(e) => {
-              if (e.key === "Enter") {
+              if (e.key === "Enter" && !searchingLocation && !placesLoading) {
                 searchLocation();
               }
             }}
+            aria-label="Search location"
             placeholder="Search city, area, landmark or pincode"
             className="h-11 flex-1 rounded-xl border border-[#eadde1] bg-[#fffafb] px-4 text-sm text-[#292331] outline-none placeholder:text-gray-400 focus:border-[#e58da4]"
           />
 
           <button
+            type="button"
             onClick={searchLocation}
             disabled={searchingLocation || placesLoading}
             className="h-11 rounded-xl bg-[#292331] px-5 text-sm font-semibold text-white transition hover:bg-[#3b3444] disabled:opacity-60"
@@ -527,6 +528,7 @@ export default function NearbyMap({ careType }) {
 
         {/* CURRENT LOCATION */}
         <button
+          type="button"
           onClick={getLocation}
           disabled={loading || placesLoading}
           className="mt-2 text-xs font-medium text-[#d77f97] hover:text-[#c76e87] disabled:opacity-50"
@@ -545,14 +547,15 @@ export default function NearbyMap({ careType }) {
           radius && (
             <p className="mt-2 text-xs text-gray-400">
               Showing {places.length} healthcare places
-              within {radius} km.
+              within {radius} km. Details come from OpenStreetMap, so please
+              confirm hours and phone numbers before visiting.
             </p>
           )}
       </div>
 
       {/* ERROR */}
       {error && (
-        <div className="absolute bottom-4 left-4 right-4 z-[1000] rounded-2xl border border-[#f1d7de] bg-white/95 px-4 py-3 text-center shadow-lg backdrop-blur">
+        <div role="alert" className="absolute bottom-4 left-4 right-4 z-1000 rounded-2xl border border-[#f1d7de] bg-white/95 px-4 py-3 text-center shadow-lg backdrop-blur">
           <p className="text-xs text-red-500">
             {error}
           </p>
@@ -563,7 +566,7 @@ export default function NearbyMap({ careType }) {
       {!location &&
         !loading &&
         !error && (
-          <div className="pointer-events-none absolute inset-0 z-[500] flex items-center justify-center">
+          <div className="pointer-events-none absolute inset-0 z-500 flex items-center justify-center">
             <div className="rounded-2xl bg-white/90 px-6 py-4 text-center shadow-lg backdrop-blur">
               <div className="text-2xl">
                 🌸

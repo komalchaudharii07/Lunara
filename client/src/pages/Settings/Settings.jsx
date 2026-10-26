@@ -9,6 +9,7 @@ import {
   deleteAccount,
   exportMyData,
   getCurrentUser,
+  isRemembered,
   logoutOtherDevices,
   saveToken,
   setAiConsent,
@@ -80,7 +81,7 @@ export default function Settings() {
   }, []);
 
   // a token that lives in localStorage means "remember me" was chosen
-  const remembered = () => !!localStorage.getItem("token");
+  const remembered = isRemembered;
 
   const handleChangePassword = async (e) => {
     e.preventDefault();
@@ -235,6 +236,7 @@ export default function Settings() {
             onChange={(e) => setPw({ ...pw, next: e.target.value })}
             required
             minLength={8}
+            maxLength={72}
             className={input}
           />
           <input
@@ -245,6 +247,7 @@ export default function Settings() {
             value={pw.confirm}
             onChange={(e) => setPw({ ...pw, confirm: e.target.value })}
             required
+            maxLength={72}
             className={input}
           />
           <button type="submit" disabled={pwBusy} className={primaryBtn}>
@@ -279,7 +282,7 @@ export default function Settings() {
           >
             <span
               className={`absolute top-0.5 h-6 w-6 rounded-full bg-white transition-all ${
-                aiOn ? "left-[22px]" : "left-0.5"
+                aiOn ? "left-5.5" : "left-0.5"
               }`}
             />
           </button>
@@ -310,7 +313,8 @@ export default function Settings() {
         <h2 className="text-lg font-semibold text-[#292331]">Your data</h2>
         <p className="mt-2 text-sm leading-6 text-gray-500">
           Download a copy of everything Lunara stores about you, or delete
-          parts of it.
+          parts of it. The downloaded file contains private health details, so
+          keep it somewhere safe.
         </p>
 
         <div className="mt-4 flex flex-wrap gap-2">
@@ -355,7 +359,8 @@ export default function Settings() {
         <h2 className="text-lg font-semibold text-red-600">Delete account</h2>
         <p className="mt-2 text-sm leading-6 text-gray-500">
           This permanently deletes your profile, cycles, daily logs, chats,
-          posts and reviews. It can't be undone.
+          posts and reviews. Upcoming appointments are cancelled and any
+          payment is refunded. It can't be undone.
         </p>
 
         <form onSubmit={handleDelete} className="mt-4 space-y-3">

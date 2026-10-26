@@ -19,7 +19,11 @@ const median = (arr) => {
  * cycles   : [{ periodStartDate, periodLength? }] (any order)
  * todayKey : "YYYY-MM-DD" in the USER's time zone (defaults to the server's UTC date)
  */
-const buildSummary = (cycles, todayKey = dayKey(new Date())) => {
+// default is the India date (UTC+05:30), the same day the app shows the user
+const buildSummary = (
+  cycles,
+  todayKey = dayKey(new Date(Date.now() + 330 * 60 * 1000))
+) => {
   const sorted = [...cycles].sort(
     (a, b) => new Date(a.periodStartDate) - new Date(b.periodStartDate)
   );

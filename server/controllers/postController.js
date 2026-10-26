@@ -6,9 +6,7 @@ const REPORT_REASONS = ["spam", "harassment", "misinformation", "self-harm", "ot
 const AUTO_HIDE_AT = 3; // reports from different people before a post is hidden
 
 // words that suggest the author may be in crisis
-const CRISIS_PATTERNS = [
-  /\b(suicid\w*|kill myself|end my life|want to die|self[- ]?harm|hurt myself|harm myself)\b/i,
-];
+const { SELF_HARM: CRISIS_PATTERNS } = require("../utils/crisis");
 
 const isValidId = (id) => mongoose.Types.ObjectId.isValid(id);
 
@@ -162,7 +160,7 @@ const reportPost = async (req, res) => {
       return res.status(404).json({ message: "Post not found" });
     }
 
-    if (post.user.toString() === req.user) {
+    if (String(post.user) === String(req.user)) {
       return res
         .status(400)
         .json({ message: "You can't report your own post" });
@@ -266,22 +264,15 @@ const setPostStatus = async (req, res) => {
       return res.status(400).json({ message: "Invalid status" });
     }
 
-    const update = { status };
     // a moderator restoring a post clears its reports so it isn't hidden again at once
-    const post = await Post.findByIdAndUpdate(
-      id,
+    const update =
       status === "visible"
-        ? { $set: update, $unset: { reports: 1 }, $inc: {} }
-        : { $set: update },
-      { new: true }
-    ).select("status");
+        ? { $set: { status, reportCount: 0, reports: [] } }
+        : { $set: { status } };
+    const post = await Post.findByIdAndUpdate(id, update, { new: true }).select("status");
 
     if (!post) {
       return res.status(404).json({ message: "Post not found" });
-    }
-
-    if (status === "visible") {
-      await Post.updateOne({ _id: id }, { $set: { reportCount: 0, reports: [] } });
     }
 
     res.json({ message: "Updated", status: post.status });

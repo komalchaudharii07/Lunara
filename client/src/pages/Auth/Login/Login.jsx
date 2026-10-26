@@ -1,10 +1,9 @@
 import { useState } from "react";
-import { Link, Navigate, useLocation, useNavigate } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import AuthLayout from "../../../layouts/AuthLayout/AuthLayout";
 import loginImage from "../../../assets/login.jpeg";
 import {
   consumeSessionExpired,
-  getToken,
   loginUser,
   saveToken,
 } from "../../../services/api";
@@ -90,12 +89,12 @@ export default function Login() {
   const [loading, setLoading] = useState(false);
 
   // where the user was going before being sent to login
-  const redirectTo = location.state?.from?.pathname || "/dashboard";
-
-  // already logged in: no need to see the login page
-  if (getToken() && !loading) {
-    return <Navigate to={redirectTo} replace />;
-  }
+  // (the route is already inside PublicOnlyRoute, so logged-in users never get here)
+  const from = location.state?.from;
+  const redirectTo =
+    from?.pathname && !["/login", "/register"].includes(from.pathname)
+      ? `${from.pathname}${from.search || ""}`
+      : "/dashboard";
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -116,7 +115,10 @@ export default function Login() {
       // clears any old token, then stores the new one
       saveToken(data.token, rememberMe);
 
-      navigate(redirectTo, { replace: true });
+      // doctors go straight to their portal unless they were sent somewhere else
+      const target =
+        data.user?.isDoctor && redirectTo === "/dashboard" ? "/doctor-portal" : redirectTo;
+      navigate(target, { replace: true });
     } catch (err) {
       setError(err.message);
     } finally {
@@ -126,8 +128,8 @@ export default function Login() {
 
   return (
     <AuthLayout>
-      <div className="w-full max-w-[1080px] overflow-hidden rounded-[28px] bg-white shadow-[0_20px_60px_rgba(170,95,120,0.12)]">
-        <div className="grid min-h-[650px] md:grid-cols-2">
+      <div className="w-full max-w-270 overflow-hidden rounded-[28px] bg-white shadow-[0_20px_60px_rgba(170,95,120,0.12)]">
+        <div className="grid min-h-162.5 md:grid-cols-2">
 
           <div className="hidden md:block">
             <img
@@ -138,7 +140,7 @@ export default function Login() {
           </div>
 
           <div className="flex items-center justify-center px-10 py-12 sm:px-14">
-            <div className="w-full max-w-[400px]">
+            <div className="w-full max-w-100">
 
               <div>
                 <h1 className="font-serif text-[40px] font-semibold tracking-[-0.5px] text-[#292331]">
@@ -166,7 +168,7 @@ export default function Login() {
                     Email address
                   </label>
 
-                  <div className="flex h-[52px] items-center gap-3 rounded-xl border border-gray-200 px-4 focus-within:border-[#e58da4]">
+                  <div className="flex h-13 items-center gap-3 rounded-xl border border-gray-200 px-4 focus-within:border-[#e58da4]">
                     <span className="text-gray-400">
                       <MailIcon />
                     </span>
@@ -192,7 +194,7 @@ export default function Login() {
                     Password
                   </label>
 
-                  <div className="flex h-[52px] items-center gap-3 rounded-xl border border-gray-200 px-4 focus-within:border-[#e58da4]">
+                  <div className="flex h-13 items-center gap-3 rounded-xl border border-gray-200 px-4 focus-within:border-[#e58da4]">
                     <span className="text-gray-400">
                       <LockIcon />
                     </span>
@@ -250,7 +252,7 @@ export default function Login() {
                 <button
                   type="submit"
                   disabled={loading}
-                  className="h-[52px] w-full rounded-xl bg-[#e58da4] text-sm font-semibold text-white transition hover:bg-[#d97d96] disabled:cursor-not-allowed disabled:opacity-60"
+                  className="h-13 w-full rounded-xl bg-[#e58da4] text-sm font-semibold text-white transition hover:bg-[#d97d96] disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   {loading ? "Logging in..." : "Log In"}
                 </button>

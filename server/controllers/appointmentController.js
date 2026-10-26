@@ -30,7 +30,7 @@ const MAX_REASON = 500;
 
 const VIDEO_BASE = (process.env.VIDEO_BASE_URL || "https://meet.jit.si").replace(/\/+$/, "");
 
-const CRISIS = /\b(suicid\w*|kill myself|end my life|want to die|self[- ]?harm|hurt myself|harm myself)\b/i;
+const { SELF_HARM_ANY: CRISIS } = require("../utils/crisis");
 
 const isId = (id) => mongoose.Types.ObjectId.isValid(id);
 
@@ -68,12 +68,12 @@ const getSlots = async (req, res) => {
     if (!isDateKey(date)) return res.status(400).json({ message: "Choose a valid date" });
 
     const [doctor, schedule] = await Promise.all([
-      Doctor.findOne({ _id: doctorId, available: true }).select("_id").lean(),
+      Doctor.findOne({ _id: doctorId, available: true, verificationStatus: "approved" }).select("_id").lean(),
       DoctorSchedule.findOne({ doctor: doctorId }).lean(),
     ]);
 
     if (!doctor) return res.status(404).json({ message: "Doctor not found" });
-    if (!schedule) {
+    if (!schedule || !(schedule.weekly || []).length) {
       return res.json({ slots: [], slotMinutes: 30, maxAdvanceDays: 30, notScheduled: true });
     }
 
@@ -137,7 +137,7 @@ const bookAppointment = async (req, res) => {
     }
 
     const [doctor, schedule] = await Promise.all([
-      Doctor.findOne({ _id: doctorId, available: true })
+      Doctor.findOne({ _id: doctorId, available: true, verificationStatus: "approved" })
         .select("name consultationFee")
         .lean(),
       DoctorSchedule.findOne({ doctor: doctorId }).lean(),
@@ -295,7 +295,7 @@ const getMyAppointments = async (req, res) => {
         .sort({ startsAt: -1 })
         .limit(100)
         .select(
-          "doctor startsAt endsAt status reason fee shareReport reportViewedAt meetingLink cancelledBy paymentStatus amountPaise holdExpiresAt"
+          "doctor startsAt endsAt status reason fee shareReport reportViewedAt meetingLink cancelledBy paymentStatus amountPaise holdExpiresAt prescription"
         )
         .populate("doctor", "name specialization")
         .lean(),
@@ -303,7 +303,10 @@ const getMyAppointments = async (req, res) => {
     ]);
 
     res.json({
-      appointments,
+      // the video link is only for confirmed visits, never for unpaid holds
+      appointments: appointments.map((a) =>
+        a.status === "booked" ? a : { ...a, meetingLink: undefined }
+      ),
       doctorId: me?.doctorId || null,
       isAdmin: Boolean(me?.isAdmin),
     });
@@ -340,10 +343,24 @@ const cancelMyAppointment = async (req, res) => {
       });
     }
 
-    appointment.status = "cancelled";
-    appointment.cancelledBy = "user";
-    appointment.cancelledAt = new Date();
-    await appointment.save();
+    // one atomic step, so two quick cancel requests can't both go through
+    const closed = await Appointment.findOneAndUpdate(
+      { _id: appointment._id, status: appointment.status },
+      {
+        $set: {
+          status: "cancelled",
+          holdsSlot: false,
+          cancelledBy: "user",
+          cancelledAt: new Date(),
+        },
+      },
+      { new: true }
+    );
+    if (!closed) {
+      return res
+        .status(409)
+        .json({ message: "This appointment was just changed. Please refresh and try again." });
+    }
 
     // paid visits get the full amount back
     let refund = null;
@@ -436,7 +453,7 @@ const saveSchedule = async (req, res) => {
     const schedule = await DoctorSchedule.findOneAndUpdate(
       { doctor: doctorId },
       { $set: value, $setOnInsert: { doctor: doctorId } },
-      { new: true, upsert: true, runValidators: true }
+     { returnDocument: "after", upsert: true, runValidators: true }
     )
       .select("slotMinutes weekly daysOff maxAdvanceDays")
       .lean();
@@ -472,7 +489,7 @@ const getDoctorAppointments = async (req, res) => {
       .sort({ startsAt: upcoming ? 1 : -1 })
       .limit(200)
       .select(
-        "user startsAt endsAt status reason fee shareReport reportViewedAt meetingLink cancelledBy paymentStatus"
+        "user startsAt endsAt status reason fee shareReport reportViewedAt meetingLink cancelledBy paymentStatus prescription"
       )
       .populate("user", "name") // never the patient's email or phone
       .lean();
@@ -523,6 +540,11 @@ const updateByDoctor = async (req, res) => {
         }
         appointment.status = "completed";
       } else if (status === "cancelled") {
+        if (appointment.endsAt.getTime() < Date.now()) {
+          return res.status(400).json({
+            message: "This visit has already ended. Mark it completed instead.",
+          });
+        }
         appointment.status = "cancelled";
         appointment.cancelledBy = "doctor";
         appointment.cancelledAt = new Date();
@@ -594,8 +616,8 @@ const getSharedReport = async (req, res) => {
       });
     }
 
-    const to = new Date().toISOString().slice(0, 10);
-    const from = new Date(now - 180 * DAY).toISOString().slice(0, 10);
+    const to = istDateKey(new Date(now));
+    const from = istDateKey(new Date(now - 180 * DAY));
 
     const report = await buildReport(appointment.user, {
       from,
@@ -615,6 +637,133 @@ const getSharedReport = async (req, res) => {
   }
 };
 
+// ---------------------------------------------------------------- PRESCRIPTION
+
+const text = (v, max) => (typeof v === "string" ? v.trim() : "").slice(0, max + 1);
+
+// checks what the doctor typed; returns { error } or { value }
+const cleanPrescription = (body = {}) => {
+  const diagnosis = text(body.diagnosis, 500);
+  const advice = text(body.advice, 1500);
+  const followUp = text(body.followUp, 200);
+  if (diagnosis.length > 500) return { error: "Diagnosis must be 500 characters or fewer" };
+  if (advice.length > 1500) return { error: "Advice must be 1500 characters or fewer" };
+  if (followUp.length > 200) return { error: "Follow-up must be 200 characters or fewer" };
+
+  const rawMeds = Array.isArray(body.medicines) ? body.medicines : [];
+  if (rawMeds.length > 15) return { error: "A prescription can have up to 15 medicines" };
+
+  const medicines = [];
+  for (const m of rawMeds) {
+    const name = text(m?.name, 100);
+    if (!name) continue; // skip empty rows
+    const med = {
+      name,
+      dose: text(m?.dose, 60),
+      frequency: text(m?.frequency, 60),
+      duration: text(m?.duration, 60),
+      notes: text(m?.notes, 200),
+    };
+    if (name.length > 100 || med.dose.length > 60 || med.frequency.length > 60 ||
+        med.duration.length > 60 || med.notes.length > 200) {
+      return { error: "One of the medicine fields is too long" };
+    }
+    medicines.push(med);
+  }
+
+  if (!diagnosis && !advice && medicines.length === 0) {
+    return { error: "Please write a diagnosis, advice or at least one medicine" };
+  }
+  return { value: { diagnosis, advice, followUp, medicines } };
+};
+
+// PUT /api/appointments/:id/prescription  (the doctor, or an admin)
+const savePrescription = async (req, res) => {
+  try {
+    if (!isId(req.params.id)) return res.status(400).json({ message: "Invalid appointment" });
+
+    const appointment = await Appointment.findById(req.params.id).populate("doctor", "name");
+    if (!appointment) return res.status(404).json({ message: "Appointment not found" });
+
+    if (!(await canManageDoctor(req.user, appointment.doctor._id))) {
+      return res.status(403).json({ message: "Not allowed" });
+    }
+    if (!["booked", "completed"].includes(appointment.status)) {
+      return res.status(400).json({ message: "A prescription needs a confirmed visit" });
+    }
+    if (appointment.startsAt.getTime() > Date.now()) {
+      return res.status(400).json({ message: "You can write it once the visit has started" });
+    }
+
+    const { error, value } = cleanPrescription(req.body);
+    if (error) return res.status(400).json({ message: error });
+
+    const first = !appointment.prescription?.issuedAt;
+    const now = new Date();
+    appointment.prescription = {
+      ...value,
+      issuedAt: appointment.prescription?.issuedAt || now,
+      updatedAt: now,
+    };
+    await appointment.save();
+
+    // the email says a prescription is ready; the medicines themselves are never emailed
+    if (first) {
+      const patient = await User.findById(appointment.user).select("name email").lean();
+      if (patient?.email) {
+        notify({
+          to: patient.email,
+          subject: "Your Lunara prescription is ready",
+          text:
+            `Hi ${patient.name},\n\n${appointment.doctor.name} has added a prescription for your ` +
+            `visit on ${whenText(appointment.startsAt)}. Log in to Lunara and open Appointments to read it.\n\nLunara`,
+          html:
+            `<p>Hi ${esc(patient.name)},</p><p><strong>${esc(appointment.doctor.name)}</strong> has added a prescription for your ` +
+            `visit on <strong>${esc(whenText(appointment.startsAt))}</strong>. Log in to Lunara and open Appointments to read it.</p><p>Lunara</p>`,
+        });
+      }
+    }
+
+    res.json({ message: "Prescription saved", prescription: appointment.prescription });
+  } catch (error) {
+    console.error("Save prescription error:", error);
+    res.status(500).json({ message: "Couldn't save the prescription" });
+  }
+};
+
+// GET /api/appointments/:id/prescription  (the patient, that doctor, or an admin)
+const getPrescription = async (req, res) => {
+  try {
+    if (!isId(req.params.id)) return res.status(400).json({ message: "Invalid appointment" });
+
+    const appointment = await Appointment.findById(req.params.id)
+      .populate("doctor", "name specialization qualification registrationNumber registrationCouncil")
+      .populate("user", "name age")
+      .lean();
+    if (!appointment || !appointment.prescription?.issuedAt) {
+      return res.status(404).json({ message: "No prescription for this appointment" });
+    }
+
+    const isPatient = String(appointment.user._id) === String(req.user);
+    if (!isPatient && !(await canManageDoctor(req.user, appointment.doctor._id))) {
+      return res.status(403).json({ message: "Not allowed" });
+    }
+
+    res.json({
+      prescription: {
+        ...appointment.prescription,
+        appointmentId: appointment._id,
+        visitAt: appointment.startsAt,
+        doctor: appointment.doctor,
+        patient: { name: appointment.user.name, age: appointment.user.age },
+      },
+    });
+  } catch (error) {
+    console.error("Get prescription error:", error);
+    res.status(500).json({ message: "Couldn't load the prescription" });
+  }
+};
+
 module.exports = {
   getSlots,
   bookAppointment,
@@ -626,5 +775,7 @@ module.exports = {
   getDoctorAppointments,
   updateByDoctor,
   getSharedReport,
+  savePrescription,
+  getPrescription,
   IST_OFFSET_MS, // exported for tests
 };

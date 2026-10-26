@@ -7,7 +7,6 @@ import {
   getCheckout,
   getDoctor,
   getPaymentConfig,
-  localDateKey,
   verifyPayment,
 } from "../../services/api";
 import { formatDateTime, formatTime } from "../../utils/dates";
@@ -15,16 +14,19 @@ import { openCheckout } from "../../utils/razorpayCheckout";
 
 const DAYS_SHOWN = 14;
 
-// the next 14 days as { key: "YYYY-MM-DD", weekday, day, month }
+// The next 14 days as { key: "YYYY-MM-DD", weekday, day, month }.
+// Slots are in India time, so the days are India days whatever the device says.
+const IST_MS = 330 * 60 * 1000;
+const DAY_MS = 24 * 60 * 60 * 1000;
 const buildDays = () =>
   Array.from({ length: DAYS_SHOWN }, (_, i) => {
-    const d = new Date();
-    d.setDate(d.getDate() + i);
+    // shifted so the UTC getters read the India wall clock
+    const d = new Date(Date.now() + IST_MS + i * DAY_MS);
     return {
-      key: localDateKey(d),
-      weekday: d.toLocaleDateString("en-IN", { weekday: "short" }),
-      day: d.getDate(),
-      month: d.toLocaleDateString("en-IN", { month: "short" }),
+      key: d.toISOString().slice(0, 10),
+      weekday: d.toLocaleDateString("en-IN", { weekday: "short", timeZone: "UTC" }),
+      day: d.getUTCDate(),
+      month: d.toLocaleDateString("en-IN", { month: "short", timeZone: "UTC" }),
     };
   });
 
@@ -127,7 +129,7 @@ export default function BookAppointment() {
       await openCheckout({
         payment: booking.payment,
         onPaid: (result) => confirmPayment(booking, result),
-        onDismiss: () => {},
+        onDismiss: () => setError("Payment window closed. Tap Pay now to continue."),
         onFailed: (message) => setError(message),
       });
     } catch (err) {
@@ -422,10 +424,11 @@ export default function BookAppointment() {
                     Share my cycle report with the doctor
                   </strong>
                   <br />
-                  They can see your last 6 months of periods and daily logs from
-                  24 hours before until 7 days after the visit. Your personal
-                  notes, email and phone are not shared. You can switch this off
-                  any time from your Appointments page.
+                  They can see your age, height, weight and blood group, plus
+                  your last 6 months of periods and daily logs, from 24 hours
+                  before until 7 days after the visit. Your personal notes,
+                  email and phone are not shared. You can switch this off any
+                  time from your Appointments page.
                 </span>
               </label>
 

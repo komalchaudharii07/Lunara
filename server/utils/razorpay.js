@@ -15,8 +15,7 @@ const call = async (path, body) => {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization:
-        "Basic " + Buffer.from(`${keyId()}:${keySecret()}`).toString("base64"),
+      Authorization: "Basic " + Buffer.from(`${keyId()}:${keySecret()}`).toString("base64"),
     },
     body: JSON.stringify(body),
     signal: AbortSignal.timeout(15000),
@@ -32,6 +31,8 @@ const call = async (path, body) => {
   if (!response.ok) {
     const error = new Error(data?.error?.description || `Razorpay error ${response.status}`);
     error.status = response.status;
+    error.code = data?.error?.code;
+    error.description = data?.error?.description;
     throw error;
   }
 
@@ -59,10 +60,7 @@ const safeEqual = (a, b) => {
 // what Razorpay Checkout returns after a payment: signature = HMAC(order_id|payment_id)
 const verifyPaymentSignature = (orderId, paymentId, signature) => {
   if (!keySecret() || typeof signature !== "string") return false;
-  const expected = crypto
-    .createHmac("sha256", keySecret())
-    .update(`${orderId}|${paymentId}`)
-    .digest("hex");
+  const expected = crypto.createHmac("sha256", keySecret()).update(`${orderId}|${paymentId}`).digest("hex");
   return safeEqual(expected, signature);
 };
 

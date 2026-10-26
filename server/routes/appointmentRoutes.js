@@ -12,6 +12,8 @@ const {
   getDoctorAppointments,
   updateByDoctor,
   getSharedReport,
+  savePrescription,
+  getPrescription,
 } = require("../controllers/appointmentController");
 
 const protect = require("../middleware/authMiddleware");
@@ -51,5 +53,7 @@ router.patch("/:id/cancel", protect, changeLimiter(), cancelMyAppointment);
 router.patch("/:id/share", protect, changeLimiter(), setReportSharing);
 router.patch("/:id/doctor", protect, changeLimiter(), updateByDoctor);
 router.get("/:id/report", protect, changeLimiter(), getSharedReport);
+router.put("/:id/prescription", protect, changeLimiter(), savePrescription);
+router.get("/:id/prescription", protect, changeLimiter(), getPrescription);
 
 module.exports = router;

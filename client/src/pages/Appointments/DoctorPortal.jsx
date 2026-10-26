@@ -1,12 +1,15 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   getDoctorAppointments,
   getDoctorSchedule,
   getDoctors,
   getMyAppointments,
+  getMyDoctorProfile,
+  updateMyDoctorProfile,
   getSharedReport,
   saveDoctorSchedule,
+  savePrescription,
   updateAppointmentByDoctor,
 } from "../../services/api";
 import ReportView from "../../components/report/ReportView";
@@ -24,6 +27,108 @@ const statusStyle = {
 const input =
   "h-10 rounded-lg border border-[#eadde1] bg-white px-2 text-sm text-[#292331] outline-none focus:border-[#e58da4]";
 
+// ------------------------------------------------------------ prescription
+
+const emptyMedicine = { name: "", dose: "", frequency: "", duration: "", notes: "" };
+
+function PrescriptionForm({ appointment, onSaved }) {
+  const saved = appointment.prescription;
+  const [diagnosis, setDiagnosis] = useState(saved?.diagnosis || "");
+  const [advice, setAdvice] = useState(saved?.advice || "");
+  const [followUp, setFollowUp] = useState(saved?.followUp || "");
+  const [medicines, setMedicines] = useState(
+    saved?.medicines?.length ? saved.medicines : [{ ...emptyMedicine }]
+  );
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [note, setNote] = useState("");
+
+  const setMed = (i, key, value) =>
+    setMedicines((list) => list.map((m, idx) => (idx === i ? { ...m, [key]: value } : m)));
+
+  const submit = async (e) => {
+    e.preventDefault();
+    setSaving(true);
+    setError("");
+    setNote("");
+    try {
+      await savePrescription(appointment._id, { diagnosis, advice, followUp, medicines });
+      setNote("Prescription saved. The patient can see it now.");
+      onSaved();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const wide = `${input} w-full`;
+
+  return (
+    <form onSubmit={submit} className="mt-4 space-y-4 rounded-2xl bg-[#fdf7f8] p-4">
+      <label className="block text-xs text-gray-500">Diagnosis
+        <textarea rows={2} maxLength={500} value={diagnosis} onChange={(e) => setDiagnosis(e.target.value)}
+          className="mt-1 w-full rounded-lg border border-[#eadde1] bg-white px-2 py-2 text-sm outline-none focus:border-[#e58da4]" />
+      </label>
+
+      <div>
+        <p className="text-xs text-gray-500">Medicines</p>
+        <div className="mt-2 space-y-3">
+          {medicines.map((m, i) => (
+            <div key={i} className="grid gap-2 rounded-xl bg-white p-3 sm:grid-cols-4">
+              <input aria-label="Medicine name" placeholder="Medicine" maxLength={100} value={m.name}
+                onChange={(e) => setMed(i, "name", e.target.value)} className={`${wide} sm:col-span-4`} />
+              <input aria-label="Dose" placeholder="Dose (e.g. 500 mg)" maxLength={60} value={m.dose}
+                onChange={(e) => setMed(i, "dose", e.target.value)} className={wide} />
+              <input aria-label="How often" placeholder="How often (e.g. twice a day)" maxLength={60} value={m.frequency}
+                onChange={(e) => setMed(i, "frequency", e.target.value)} className={wide} />
+              <input aria-label="For how long" placeholder="For (e.g. 5 days)" maxLength={60} value={m.duration}
+                onChange={(e) => setMed(i, "duration", e.target.value)} className={wide} />
+              <button type="button" onClick={() => setMedicines((list) => list.filter((_, idx) => idx !== i))}
+                className="rounded-lg border border-[#eadde1] px-2 text-xs text-gray-500 hover:border-red-300 hover:text-red-500">
+                Remove
+              </button>
+              <input aria-label="Note" placeholder="Note (e.g. after food)" maxLength={200} value={m.notes}
+                onChange={(e) => setMed(i, "notes", e.target.value)} className={`${wide} sm:col-span-4`} />
+            </div>
+          ))}
+        </div>
+        {medicines.length < 15 && (
+          <button type="button" onClick={() => setMedicines((list) => [...list, { ...emptyMedicine }])}
+            className="mt-2 text-xs font-medium text-[#d97d96]">
+            + Add medicine
+          </button>
+        )}
+      </div>
+
+      <label className="block text-xs text-gray-500">Advice
+        <textarea rows={3} maxLength={1500} value={advice} onChange={(e) => setAdvice(e.target.value)}
+          className="mt-1 w-full rounded-lg border border-[#eadde1] bg-white px-2 py-2 text-sm outline-none focus:border-[#e58da4]" />
+      </label>
+
+      <label className="block text-xs text-gray-500">Follow-up
+        <input maxLength={200} value={followUp} onChange={(e) => setFollowUp(e.target.value)}
+          placeholder="e.g. Review after 2 weeks" className={`${wide} mt-1`} />
+      </label>
+
+      {note && <p role="status" className="text-xs text-green-600">{note}</p>}
+      {error && <p role="alert" className="text-xs text-red-500">{error}</p>}
+
+      <div className="flex flex-wrap items-center gap-3">
+        <button type="submit" disabled={saving}
+          className="h-10 rounded-xl bg-[#e58da4] px-5 text-sm font-semibold text-white hover:bg-[#d97d96] disabled:opacity-60">
+          {saving ? "Saving..." : saved?.issuedAt ? "Update prescription" : "Send prescription"}
+        </button>
+        {saved?.issuedAt && (
+          <Link to={`/appointments/${appointment._id}/prescription`} className="text-xs font-medium text-[#d97d96]">
+            View / print
+          </Link>
+        )}
+      </div>
+    </form>
+  );
+}
+
 // ------------------------------------------------------------ appointments
 
 function AppointmentCard({ a, onChanged }) {
@@ -33,6 +138,7 @@ function AppointmentCard({ a, onChanged }) {
   const [note, setNote] = useState("");
   const [report, setReport] = useState(null);
   const [reportLoading, setReportLoading] = useState(false);
+  const [rxOpen, setRxOpen] = useState(false);
 
   const active = a.status === "booked";
   const started = new Date(a.startsAt).getTime() <= Date.now();
@@ -71,8 +177,10 @@ function AppointmentCard({ a, onChanged }) {
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h3 className="font-semibold text-[#292331]">{a.user?.name || "Patient"}</h3>
+          <p className="mt-1 text-sm text-gray-500">{formatDateTime(a.startsAt)}</p>
+        </div>
 
-        <span className={`rounded-full px-3 py-1 text-xs font-medium capitalize ${statusStyle[a.status]}`}>
+        <span className={`rounded-full px-3 py-1 text-xs font-medium capitalize ${statusStyle[a.status] || statusStyle.completed}`}>
           {a.status}
         </span>
       </div>
@@ -96,6 +204,19 @@ function AppointmentCard({ a, onChanged }) {
         </div>
       )}
 
+      {["booked", "completed"].includes(a.status) && started && (
+        <div className="mt-4">
+          <button
+            type="button"
+            onClick={() => setRxOpen((v) => !v)}
+            className="rounded-lg border border-[#e58da4] px-3 py-2 text-xs font-medium text-[#d97d96] hover:bg-[#fdf1f4]"
+          >
+            {rxOpen ? "Close prescription" : a.prescription?.issuedAt ? "Edit prescription" : "Write prescription"}
+          </button>
+          {rxOpen && <PrescriptionForm appointment={a} onSaved={onChanged} />}
+        </div>
+      )}
+
       {active && (
         <div className="mt-4 space-y-3 border-t border-[#f2e8eb] pt-4">
           <div>
@@ -114,7 +235,13 @@ function AppointmentCard({ a, onChanged }) {
               <button
                 type="button"
                 disabled={busy || link.trim() === (a.meetingLink || "")}
-                onClick={() => act({ meetingLink: link.trim() }, "Link saved.")}
+                onClick={() => {
+                  if (!/^https:\/\//i.test(link.trim())) {
+                    setError("The video link must start with https://");
+                    return;
+                  }
+                  act({ meetingLink: link.trim() }, "Link saved.");
+                }}
                 className="rounded-lg bg-[#e58da4] px-3 text-xs font-semibold text-white disabled:opacity-50"
               >
                 Save
@@ -146,7 +273,7 @@ function AppointmentCard({ a, onChanged }) {
               type="button"
               disabled={busy}
               onClick={() => {
-                if (window.confirm(`Cancel the appointment with ${a.user?.name || "this patient"}? They will get an email.`)) {
+                if (window.confirm(`Cancel the appointment with ${a.user?.name || "this patient"}? They will get an email, and any payment is refunded in full.`)) {
                   act({ status: "cancelled" }, "Appointment cancelled.");
                 }
               }}
@@ -176,15 +303,20 @@ function AppointmentsTab({ doctorId }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
+  // ignores answers that arrive after the doctor switched Upcoming / Past
+  const requestId = useRef(0);
+
   const load = useCallback(async () => {
+    const mine = ++requestId.current;
     try {
       const data = await getDoctorAppointments(doctorId, scope);
+      if (mine !== requestId.current) return;
       setItems(data.appointments || []);
       setError("");
     } catch (err) {
-      setError(err.message);
+      if (mine === requestId.current) setError(err.message);
     } finally {
-      setLoading(false);
+      if (mine === requestId.current) setLoading(false);
     }
   }, [doctorId, scope]);
 
@@ -292,9 +424,23 @@ function ScheduleTab({ doctorId }) {
   };
 
   const handleSave = async () => {
-    setSaving(true);
     setError("");
     setMessage("");
+
+    const ahead = Number(maxAdvanceDays);
+    if (!Number.isInteger(ahead) || ahead < 1 || ahead > 60) {
+      setError("Days ahead must be a whole number from 1 to 60.");
+      return;
+    }
+    const badWindow = byDay.some((windows) =>
+      windows.some((w) => !w.start || !w.end || w.end <= w.start)
+    );
+    if (badWindow) {
+      setError("Each set of hours must end after it starts.");
+      return;
+    }
+
+    setSaving(true);
     try {
       await saveDoctorSchedule(doctorId, {
         slotMinutes,
@@ -450,6 +596,119 @@ function ScheduleTab({ doctorId }) {
   );
 }
 
+// ------------------------------------------------------------ profile
+
+const STATUS_TEXT = {
+  pending: {
+    cls: "bg-amber-50 text-amber-700",
+    text: "Waiting for admin approval. Patients can't see or book you yet.",
+  },
+  approved: { cls: "bg-green-50 text-green-700", text: "Approved. Patients can book you." },
+  rejected: { cls: "bg-red-50 text-red-600", text: "Not approved." },
+};
+
+function StatusBanner({ profile }) {
+  const info = STATUS_TEXT[profile.verificationStatus] || STATUS_TEXT.pending;
+  return (
+    <div className={`mb-5 rounded-xl px-4 py-3 text-sm ${info.cls}`}>
+      {info.text}
+      {profile.verificationStatus === "rejected" && profile.verificationNote
+        ? ` Reason: ${profile.verificationNote}`
+        : ""}
+    </div>
+  );
+}
+
+function ProfileTab({ profile, onSaved }) {
+  const [form, setForm] = useState({
+    name: profile.name || "",
+    specialization: profile.specialization || "",
+    qualification: profile.qualification || "",
+    experience: String(profile.experience ?? ""),
+    consultationFee: String(profile.consultationFee ?? ""),
+    bio: profile.bio || "",
+    available: Boolean(profile.available),
+  });
+  const [saving, setSaving] = useState(false);
+  const [note, setNote] = useState("");
+  const [error, setError] = useState("");
+
+  const set = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.value }));
+  const approved = profile.verificationStatus === "approved";
+
+  const save = async (e) => {
+    e.preventDefault();
+    setSaving(true);
+    setNote("");
+    setError("");
+    try {
+      const data = await updateMyDoctorProfile({
+        name: form.name.trim(),
+        specialization: form.specialization.trim(),
+        qualification: form.qualification.trim(),
+        experience: Number(form.experience),
+        consultationFee: Number(form.consultationFee),
+        bio: form.bio.trim(),
+        ...(approved ? { available: form.available } : {}),
+      });
+      onSaved(data.doctor);
+      setNote("Saved.");
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const wide = `${input} w-full`;
+
+  return (
+    <form onSubmit={save} className="space-y-4 rounded-3xl bg-white p-6 shadow-[0_12px_40px_rgba(170,95,120,0.08)]">
+      <div className="grid gap-4 sm:grid-cols-2">
+        <label className="text-sm text-gray-600">Name
+          <input required maxLength={100} value={form.name} onChange={set("name")} className={`${wide} mt-1`} />
+        </label>
+        <label className="text-sm text-gray-600">Specialization
+          <input required maxLength={100} value={form.specialization} onChange={set("specialization")} className={`${wide} mt-1`} />
+        </label>
+        <label className="text-sm text-gray-600 sm:col-span-2">Qualification
+          <input required maxLength={200} value={form.qualification} onChange={set("qualification")} className={`${wide} mt-1`} />
+        </label>
+        <label className="text-sm text-gray-600">Experience (years)
+          <input required type="number" min="0" max="70" value={form.experience} onChange={set("experience")} className={`${wide} mt-1`} />
+        </label>
+        <label className="text-sm text-gray-600">Consultation fee (₹)
+          <input required type="number" min="0" max="100000" value={form.consultationFee} onChange={set("consultationFee")} className={`${wide} mt-1`} />
+        </label>
+      </div>
+
+      <label className="block text-sm text-gray-600">About you
+        <textarea rows={3} maxLength={600} value={form.bio} onChange={set("bio")}
+          className="mt-1 w-full rounded-lg border border-[#eadde1] bg-white px-2 py-2 text-sm outline-none focus:border-[#e58da4]" />
+      </label>
+
+      <p className="text-xs text-gray-400">
+        Registration: {profile.registrationCouncil || "—"} · {profile.registrationNumber || "—"} (can&apos;t be changed here)
+      </p>
+
+      <label className={`flex items-center gap-2 text-sm ${approved ? "text-gray-600" : "text-gray-400"}`}>
+        <input type="checkbox" disabled={!approved} checked={form.available}
+          onChange={(e) => setForm((f) => ({ ...f, available: e.target.checked }))}
+          className="accent-[#e58da4]" />
+        Accepting new bookings
+      </label>
+
+      {note && <p role="status" className="text-sm text-green-600">{note}</p>}
+      {error && <p role="alert" className="text-sm text-red-500">{error}</p>}
+
+      <button type="submit" disabled={saving}
+        className="h-11 rounded-xl bg-[#e58da4] px-6 text-sm font-semibold text-white hover:bg-[#d97d96] disabled:opacity-60">
+        {saving ? "Saving..." : "Save profile"}
+      </button>
+    </form>
+  );
+}
+
 // ------------------------------------------------------------ page
 
 export default function DoctorPortal() {
@@ -457,6 +716,7 @@ export default function DoctorPortal() {
   const [doctors, setDoctors] = useState([]);
   const [doctorId, setDoctorId] = useState("");
   const [tab, setTab] = useState("appointments");
+  const [profile, setProfile] = useState(null);
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -470,6 +730,12 @@ export default function DoctorPortal() {
 
         if (mine.doctorId) {
           setDoctorId(mine.doctorId);
+          const own = await getMyDoctorProfile();
+          if (!cancelled) {
+            setProfile(own.doctor);
+            // a new doctor starts on the profile tab to see their approval status
+            if (own.doctor?.verificationStatus !== "approved") setTab("profile");
+          }
         } else if (mine.isAdmin) {
           // admins pick which doctor to manage
           const list = await getDoctors();
@@ -527,12 +793,15 @@ export default function DoctorPortal() {
         </label>
       )}
 
+      {profile && <StatusBanner profile={profile} />}
+
       {doctorId && (
         <>
           <div className="mb-5 flex w-fit rounded-2xl bg-white p-1.5 shadow-[0_8px_30px_rgba(170,95,120,0.06)]">
             {[
               ["appointments", "Appointments"],
               ["schedule", "Schedule"],
+              ...(profile ? [["profile", "Profile"]] : []),
             ].map(([id, label]) => (
               <button
                 key={id}
@@ -547,10 +816,10 @@ export default function DoctorPortal() {
             ))}
           </div>
 
-          {tab === "appointments" ? (
-            <AppointmentsTab key={doctorId} doctorId={doctorId} />
-          ) : (
-            <ScheduleTab key={doctorId} doctorId={doctorId} />
+          {tab === "appointments" && <AppointmentsTab key={doctorId} doctorId={doctorId} />}
+          {tab === "schedule" && <ScheduleTab key={doctorId} doctorId={doctorId} />}
+          {tab === "profile" && profile && (
+            <ProfileTab key={profile.verificationStatus} profile={profile} onSaved={setProfile} />
           )}
         </>
       )}

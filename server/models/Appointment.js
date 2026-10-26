@@ -1,18 +1,34 @@
 const mongoose = require("mongoose");
 
+// one medicine line on a prescription
+const medicineSchema = new mongoose.Schema(
+  {
+    name: { type: String, required: true, trim: true, maxlength: 100 },
+    dose: { type: String, trim: true, maxlength: 60, default: "" },
+    frequency: { type: String, trim: true, maxlength: 60, default: "" },
+    duration: { type: String, trim: true, maxlength: 60, default: "" },
+    notes: { type: String, trim: true, maxlength: 200, default: "" },
+  },
+  { _id: false }
+);
+
+// written by the doctor after (or during) the visit; only the patient and that doctor can read it
+const prescriptionSchema = new mongoose.Schema(
+  {
+    diagnosis: { type: String, trim: true, maxlength: 500, default: "" },
+    medicines: { type: [medicineSchema], default: [] },
+    advice: { type: String, trim: true, maxlength: 1500, default: "" },
+    followUp: { type: String, trim: true, maxlength: 200, default: "" },
+    issuedAt: { type: Date },
+    updatedAt: { type: Date },
+  },
+  { _id: false }
+);
+
 const appointmentSchema = new mongoose.Schema(
   {
-    user: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "User",
-      required: true,
-    },
-
-    doctor: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "Doctor",
-      required: true,
-    },
+    user: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
+    doctor: { type: mongoose.Schema.Types.ObjectId, ref: "Doctor", required: true },
 
     startsAt: { type: Date, required: true },
     endsAt: { type: Date, required: true },
@@ -60,6 +76,9 @@ const appointmentSchema = new mongoose.Schema(
 
     // video call room (https only)
     meetingLink: { type: String, trim: true, maxlength: 300 },
+
+    // the doctor's prescription / visit summary
+    prescription: { type: prescriptionSchema },
 
     cancelledBy: { type: String, enum: ["user", "doctor"] },
     cancelledAt: { type: Date },

@@ -259,9 +259,8 @@ export default function MyAppointments() {
                   <div>
                     <h3 className="font-semibold text-[#292331]">{a.doctor?.name || "Doctor"}</h3>
                     <p className="text-sm text-[#d77f97]">{a.doctor?.specialization}</p>
-                             <p className="mt-1 text-sm text-gray-600">{formatDateTime(a.startsAt)}</p>
-        </div>
-                 
+                    <p className="mt-1 text-sm text-gray-600">{formatDateTime(a.startsAt)}</p>
+                  </div>
 
                   <span
                     className={`rounded-full px-3 py-1 text-xs font-medium ${statusStyle[a.status] || statusStyle.completed}`}
@@ -270,7 +269,9 @@ export default function MyAppointments() {
                       ? "Waiting for payment"
                       : a.status === "cancelled" && a.cancelledBy === "doctor"
                         ? "Cancelled by doctor"
-                        : a.status.replace("_", " ")}
+                        : a.status === "booked" && !isUpcoming(a)
+                          ? "completed"
+                          : a.status.replace("_", " ")}
                   </span>
                 </div>
 
@@ -279,6 +280,15 @@ export default function MyAppointments() {
                 )}
 
                 {money && <p className="mt-2 text-xs text-gray-500">{money}</p>}
+
+                {a.prescription?.issuedAt && (
+                  <Link
+                    to={`/appointments/${a._id}/prescription`}
+                    className="mt-4 inline-block rounded-xl border border-[#e58da4] px-4 py-2 text-sm font-medium text-[#d97d96] hover:bg-[#fdf1f4]"
+                  >
+                    View prescription
+                  </Link>
+                )}
 
                 {held && (
                   <div className="mt-4 rounded-2xl bg-amber-50 p-4">
@@ -320,12 +330,11 @@ export default function MyAppointments() {
                       <span>Share my cycle report with this doctor</span>
                     </label>
 
-                 {a.reportViewedAt && (
-  <p className="mt-1 text-xs text-gray-400">
-    The doctor opened your report on{" "}
-    {formatDateTime(a.reportViewedAt)}.
-  </p>
-)}
+                    {a.reportViewedAt && (
+                      <p className="mt-1 text-xs text-gray-400">
+                        The doctor opened your report on {formatDateTime(a.reportViewedAt)}.
+                      </p>
+                    )}
 
                     <div className="mt-4 flex flex-wrap items-center gap-3">
                       {canJoin ? (

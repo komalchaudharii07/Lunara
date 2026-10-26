@@ -3,12 +3,16 @@ const jwt = require("jsonwebtoken");
 const crypto = require("crypto");
 
 const User = require("../models/User");
+const Doctor = require("../models/Doctor");
+const { parseDoctorInput } = require("../utils/doctorInput");
 const Cycle = require("../models/Cycle");
 const Chat = require("../models/Chat");
 const Post = require("../models/Post");
 const DailyLog = require("../models/DailyLog");
 const Review = require("../models/Review");
 const sendEmail = require("../utils/sendEmail");
+const Appointment = require("../models/Appointment");
+const { issueRefund } = require("../utils/payments");
 
 const MIN_PASSWORD = 8;
 const MAX_PASSWORD_BYTES = 72; // bcrypt ignores everything after 72 BYTES
@@ -65,7 +69,21 @@ const publicUser = (user) => ({
   name: user.name,
   email: user.email,
   age: user.age,
+  isDoctor: !!user.doctorId,
+  isAdmin: !!user.isAdmin,
 });
+
+// emails listed in ADMIN_EMAILS (comma separated, in .env) become admins automatically
+const promoteIfAdmin = async (user) => {
+  const admins = (process.env.ADMIN_EMAILS || "")
+    .split(",")
+    .map((e) => e.trim().toLowerCase())
+    .filter(Boolean);
+  if (!user.isAdmin && admins.includes(user.email)) {
+    user.isAdmin = true;
+    await user.save();
+  }
+};
 
 const profileUser = (user) => ({
   id: user._id,
@@ -79,12 +97,15 @@ const profileUser = (user) => ({
   location: user.location,
   activityLevel: user.activityLevel,
   aiConsent: !!user.aiConsent,
+  isDoctor: !!user.doctorId,
+  isAdmin: !!user.isAdmin,
 });
 
 // REGISTER
 const register = async (req, res) => {
   try {
-    const { name, email, password, age, acceptedTerms } = req.body;
+    const { name, email, password, age, acceptedTerms, accountType, doctor } = req.body;
+    const isDoctorSignup = accountType === "doctor";
 
     if (!isString(name) || !name.trim() || name.trim().length > 100) {
       return res.status(400).json({ message: "Please enter a valid name" });
@@ -99,11 +120,25 @@ const register = async (req, res) => {
       return res.status(400).json({ message: pwProblem });
     }
 
-    const ageNumber = toNumber(age);
-    if (!Number.isInteger(ageNumber) || ageNumber < 10 || ageNumber > 100) {
-      return res
-        .status(400)
-        .json({ message: "Age must be a whole number between 10 and 100" });
+    // doctors don't enter an age; everyone else must
+    let ageNumber;
+    if (!isDoctorSignup) {
+      ageNumber = toNumber(age);
+      if (!Number.isInteger(ageNumber) || ageNumber < 10 || ageNumber > 100) {
+        return res
+          .status(400)
+          .json({ message: "Age must be a whole number between 10 and 100" });
+      }
+    }
+
+    let doctorDetails;
+    if (isDoctorSignup) {
+      const parsed = parseDoctorInput(
+        { ...(doctor && typeof doctor === "object" ? doctor : {}), name: name.trim() },
+        { requireAll: true, withLicence: true }
+      );
+      if (parsed.error) return res.status(400).json({ message: parsed.error });
+      doctorDetails = parsed.value;
     }
 
     if (acceptedTerms !== true) {
@@ -125,13 +160,34 @@ const register = async (req, res) => {
       name: name.trim(),
       email: normalizedEmail,
       password: hashedPassword,
-      age: ageNumber,
+      ...(ageNumber !== undefined ? { age: ageNumber } : {}),
       consentAcceptedAt: new Date(),
       consentVersion: CONSENT_VERSION,
     });
 
+    if (isDoctorSignup) {
+      try {
+        // starts as "pending": not public and not bookable until an admin approves it
+        const doctorProfile = await Doctor.create({
+          ...doctorDetails,
+          user: user._id,
+          verificationStatus: "pending",
+          available: false,
+        });
+        user.doctorId = doctorProfile._id;
+        await user.save();
+      } catch (err) {
+        await User.deleteOne({ _id: user._id }); // don't leave a half-made account
+        throw err;
+      }
+    }
+
+    await promoteIfAdmin(user);
+
     res.status(201).json({
-      message: "Registration successful",
+      message: isDoctorSignup
+        ? "Registration successful. An admin will verify your details before you appear to patients."
+        : "Registration successful",
       token: signToken(user._id, 0),
       user: publicUser(user),
     });
@@ -171,6 +227,8 @@ const login = async (req, res) => {
     if (!user || !isMatch) {
       return res.status(401).json({ message: "Invalid email or password" });
     }
+
+    await promoteIfAdmin(user);
 
     res.json({
       message: "Login successful",
@@ -487,6 +545,25 @@ const deleteAccount = async (req, res) => {
     if (!isMatch) {
       return res.status(400).json({ message: "Password is incorrect" });
     }
+
+    // upcoming appointments are cancelled and refunded, so a doctor is never
+    // left with a booking for an account that no longer exists
+    const upcoming = await Appointment.find({
+      user: user._id,
+      status: { $in: ["booked", "pending_payment"] },
+    });
+    for (const appt of upcoming) {
+      appt.status = "cancelled";
+      appt.cancelledBy = "user";
+      appt.cancelledAt = new Date();
+      await appt.save();
+      if (appt.paymentStatus === "paid") await issueRefund(appt._id);
+    }
+    // past records stay (payments), but stop sharing the report and drop health text
+    await Appointment.updateMany(
+      { user: user._id },
+      { $set: { shareReport: false, reason: "" } }
+    );
 
     await Promise.all([
       Cycle.deleteMany({ user: user._id }),

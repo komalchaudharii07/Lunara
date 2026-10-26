@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { getReport, localDateKey } from "../../services/api";
-import ReportView from "../../components/report/ReportView";
+import ReportView from "../Reports/ReportView";
 import { cyclesToCsv, logsToCsv } from "../../utils/reportCsv";
 
 const RANGES = [
@@ -22,7 +22,11 @@ export default function Report() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
+  // ignores answers that arrive after the person picked another range
+  const requestId = useRef(0);
+
   const load = useCallback(async (rangeDays) => {
+    const mine = ++requestId.current;
     setLoading(true);
     setError("");
     try {
@@ -30,12 +34,14 @@ export default function Report() {
         from: daysAgoKey(rangeDays),
         to: localDateKey(),
       });
-      setReport(data.report);
+      if (mine === requestId.current) setReport(data.report);
     } catch (err) {
-      setError(err.message);
-      setReport(null);
+      if (mine === requestId.current) {
+        setError(err.message);
+        setReport(null);
+      }
     } finally {
-      setLoading(false);
+      if (mine === requestId.current) setLoading(false);
     }
   }, []);
 
@@ -108,7 +114,7 @@ export default function Report() {
       </div>
 
       {loading && (
-        <div role="status" className="rounded-3xl bg-white p-10 text-center text-sm text-gray-500">
+        <div role="status" className="print:hidden rounded-3xl bg-white p-10 text-center text-sm text-gray-500">
           Building your report...
         </div>
       )}

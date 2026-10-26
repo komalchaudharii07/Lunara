@@ -14,8 +14,17 @@ function Stat({ label, value }) {
 // One report. Used on the Report page and when a doctor opens a shared report.
 // "shared" = a doctor is looking (notes are never included then).
 export default function ReportView({ report, shared = false }) {
-  const { profile, summary, stats, cycles, logs, range } = report;
-  const flow = stats.flowDays;
+  const {
+    profile = {},
+    summary = {},
+    stats = {},
+    cycles = [],
+    logs = [],
+    range = {},
+  } = report;
+  const flow = stats.flowDays || { spotting: 0, light: 0, medium: 0, heavy: 0 };
+  const symptoms = stats.symptoms || [];
+  const moods = stats.moods || [];
 
   return (
     <article className="rounded-3xl bg-white p-6 text-[#292331] shadow-[0_12px_40px_rgba(170,95,120,0.08)] print:rounded-none print:p-0 print:shadow-none sm:p-8">
@@ -28,7 +37,7 @@ export default function ReportView({ report, shared = false }) {
         </h2>
         <p className="mt-1 text-sm text-gray-500">
           {formatDay(range.from)} to {formatDay(range.to)} · Generated{" "}
-          {formatDay(report.generatedAt.slice(0, 10))}
+          {formatDay(report.generatedAt?.slice(0, 10))}
         </p>
 
         <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -77,8 +86,8 @@ export default function ReportView({ report, shared = false }) {
           <>
             <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
               <Stat label="Days logged" value={stats.logsInRange} />
-              <Stat label="Average pain" value={stats.averagePain !== null ? `${stats.averagePain} / 10` : null} />
-              <Stat label="Highest pain" value={stats.maxPain !== null ? `${stats.maxPain} / 10` : null} />
+              <Stat label="Average pain" value={stats.averagePain != null ? `${stats.averagePain} / 10` : null} />
+              <Stat label="Highest pain" value={stats.maxPain != null ? `${stats.maxPain} / 10` : null} />
               <Stat
                 label="Flow days"
                 value={`${flow.spotting + flow.light + flow.medium + flow.heavy} (heavy: ${flow.heavy})`}
@@ -89,16 +98,16 @@ export default function ReportView({ report, shared = false }) {
               <div>
                 <p className="text-sm font-medium">Most common symptoms</p>
                 <p className="mt-1 text-sm text-gray-600">
-                  {stats.symptoms.length
-                    ? stats.symptoms.map((s) => `${s.name} (${s.count})`).join(", ")
+                  {symptoms.length
+                    ? symptoms.map((s) => `${s.name} (${s.count})`).join(", ")
                     : "None recorded"}
                 </p>
               </div>
               <div>
                 <p className="text-sm font-medium">Moods</p>
                 <p className="mt-1 text-sm text-gray-600">
-                  {stats.moods.length
-                    ? stats.moods.map((m) => `${m.name} (${m.count})`).join(", ")
+                  {moods.length
+                    ? moods.map((m) => `${m.name} (${m.count})`).join(", ")
                     : "None recorded"}
                 </p>
               </div>
@@ -126,15 +135,15 @@ export default function ReportView({ report, shared = false }) {
                 </tr>
               </thead>
               <tbody>
-                {cycles.map((c) => (
-                  <tr key={c.start} className="break-inside-avoid border-b border-[#f6eef0] align-top">
+                {cycles.map((c, i) => (
+                  <tr key={`${c.start}-${i}`} className="break-inside-avoid border-b border-[#f6eef0] align-top">
                     <td className="py-2 pr-3">{formatDay(c.start)}</td>
                     <td className="py-2 pr-3">{formatDay(c.end)}</td>
                     <td className="py-2 pr-3">{c.cycleLength ? `${c.cycleLength} d` : "—"}</td>
                     <td className="py-2 pr-3">{c.periodLength ? `${c.periodLength} d` : "—"}</td>
                     <td className="py-2 text-gray-600">
                       {[c.mood, ...(c.symptoms || [])].filter(Boolean).join(", ") || "—"}
-                      {c.notes ? <span className="block text-xs text-gray-400">{c.notes}</span> : null}
+                      {!shared && c.notes ? <span className="block text-xs text-gray-400">{c.notes}</span> : null}
                     </td>
                   </tr>
                 ))}
@@ -163,15 +172,15 @@ export default function ReportView({ report, shared = false }) {
                 </tr>
               </thead>
               <tbody>
-                {logs.map((l) => (
-                  <tr key={l.date} className="break-inside-avoid border-b border-[#f6eef0] align-top">
+                {logs.map((l, i) => (
+                  <tr key={`${l.date}-${i}`} className="break-inside-avoid border-b border-[#f6eef0] align-top">
                     <td className="py-2 pr-3 whitespace-nowrap">{formatDay(l.date)}</td>
                     <td className="py-2 pr-3 capitalize">{dash(l.flow)}</td>
-                    <td className="py-2 pr-3">{l.pain !== null ? `${l.pain}/10` : "—"}</td>
+                    <td className="py-2 pr-3">{l.pain != null ? `${l.pain}/10` : "—"}</td>
                     <td className="py-2 pr-3">{dash(l.mood)}</td>
                     <td className="py-2 text-gray-600">
                       {l.symptoms?.length ? l.symptoms.join(", ") : "—"}
-                      {l.notes ? <span className="block text-xs text-gray-400">{l.notes}</span> : null}
+                      {!shared && l.notes ? <span className="block text-xs text-gray-400">{l.notes}</span> : null}
                     </td>
                   </tr>
                 ))}

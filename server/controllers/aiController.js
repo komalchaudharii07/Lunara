@@ -4,6 +4,7 @@ const Chat = require("../models/Chat");
 const User = require("../models/User");
 const DailyLog = require("../models/DailyLog");
 const { buildSummary } = require("../utils/cyclePredictions");
+const { istDateKey } = require("../utils/slots");
 
 // Set GEMINI_MODEL in .env to change the model without editing code.
 // Check the exact model ID in Google AI Studio: a wrong ID fails every request.
@@ -23,16 +24,15 @@ const getClient = () => {
 const dateKey = (d) => (d ? new Date(d).toISOString().slice(0, 10) : null);
 
 // Messages that describe an emergency get a fixed answer. No model is called.
-const SELF_HARM = [
-  /\b(suicid\w*|kill myself|end my life|want to die|self[- ]?harm|hurt myself|harm myself)\b/i,
-];
+const { SELF_HARM } = require("../utils/crisis");
 const MEDICAL_EMERGENCY = [
   /\b(heavy|severe|profuse|uncontrollable)\s+bleeding\b/i,
   /\bsoak(?:ing|ed)?\b.{0,30}\b(pad|tampon)s?\b/i,
   /\b(faint(?:ed|ing)?|passed out|unconscious|collapsed)\b/i,
-  /\b(severe|unbearable|sudden|sharp|excruciating)\b.{0,30}\b(pain|cramp\w*)\b/i,
-  /\bpregnan\w*\b.{0,60}\b(bleeding|pain|cramp\w*)\b/i,
-  /\b(bleeding|pain|cramp\w*)\b.{0,60}\bpregnan\w*\b/i,
+  /\b(unbearable|excruciating)\b.{0,30}\b(pain|cramp\w*)\b/i,
+  /\b(sudden|severe)\b.{0,15}\bpain\b.{0,40}\b(right now|just now|won'?t stop)\b/i,
+  /\b(i'?m|i am|im|am|while|during)\s+(\d+\s+(weeks?|months?)\s+)?pregnant\b.{0,60}\b(bleeding|pain|cramp\w*)\b/i,
+  /\b(bleeding|pain|cramp\w*)\b.{0,60}\b(i'?m|i am|im|am|while|during)\s+(\d+\s+(weeks?|months?)\s+)?pregnant\b/i,
   /\b(chest pain|can'?t breathe|trouble breathing)\b/i,
 ];
 
@@ -51,7 +51,7 @@ const EMERGENCY_REPLY =
 const matchesAny = (patterns, text) => patterns.some((p) => p.test(text));
 
 const buildSystemInstruction = (cycles, summary, logs = []) => {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = istDateKey(new Date()); // India date, same day the app shows
 
   const records = cycles.length
     ? cycles
@@ -197,7 +197,7 @@ const askLunaraAI = async (req, res) => {
       )
       .lean();
 
-    const summary = buildSummary([...cycles].reverse());
+    const summary = buildSummary([...cycles].reverse(), istDateKey(new Date()));
 
     const logs = await DailyLog.find({ user: req.user })
       .sort({ date: -1 })

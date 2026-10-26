@@ -45,18 +45,22 @@ export default function Community() {
 
   const likingRef = useRef(new Set());
 
+  // ignores answers that arrive after the person picked another category
+  const postsRequest = useRef(0);
+
   // FETCH POSTS (the category filter is applied by the server)
   const loadPosts = async (category) => {
+    const mine = ++postsRequest.current;
     try {
       setLoading(true);
       setError("");
 
       const data = await getPosts(category === "All" ? {} : { category });
-      setPosts(data.posts || []);
+      if (mine === postsRequest.current) setPosts(data.posts || []);
     } catch (err) {
-      setError(err.message);
+      if (mine === postsRequest.current) setError(err.message);
     } finally {
-      setLoading(false);
+      if (mine === postsRequest.current) setLoading(false);
     }
   };
 
@@ -156,8 +160,6 @@ export default function Community() {
       setError(err.message);
     }
   };
-
-  const filteredPosts = posts;
 
   return (
     <div className="mx-auto max-w-5xl">
@@ -372,7 +374,7 @@ export default function Community() {
       {/* POSTS */}
       {!loading && (
         <div className="space-y-5">
-          {filteredPosts.map((post) => (
+          {posts.map((post) => (
             <article
               key={post._id}
               className="rounded-3xl bg-white p-6 shadow-[0_12px_40px_rgba(170,95,120,0.08)]"
@@ -451,7 +453,7 @@ export default function Community() {
             </article>
           ))}
 
-          {filteredPosts.length === 0 && (
+          {posts.length === 0 && (
             <div className="rounded-3xl bg-white p-10 text-center">
               <p className="text-sm text-gray-400">
                 No posts in this category yet.

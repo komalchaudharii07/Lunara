@@ -1,10 +1,27 @@
 import { Link, NavLink, Outlet, useNavigate } from "react-router-dom";
-import { useEffect, useState } from "react";
-import { clearToken } from "../../services/api";
+import { Suspense, useEffect, useState } from "react";
+import { clearToken, getCurrentUser } from "../../services/api";
 
 export default function DashboardLayout() {
   const navigate = useNavigate();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [isDoctor, setIsDoctor] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false);
+
+  // doctors get an extra "Doctor Portal" link
+  useEffect(() => {
+    let alive = true;
+    getCurrentUser()
+      .then((data) => {
+        if (!alive) return;
+        setIsDoctor(Boolean(data?.user?.isDoctor));
+        setIsAdmin(Boolean(data?.user?.isAdmin));
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   // close the mobile menu with the Escape key
   useEffect(() => {
@@ -13,7 +30,13 @@ export default function DashboardLayout() {
       if (e.key === "Escape") setSidebarOpen(false);
     };
     window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
+    // stop the page behind the open menu from scrolling
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      document.body.style.overflow = previousOverflow;
+    };
   }, [sidebarOpen]);
 
   const navItems = [
@@ -27,6 +50,8 @@ export default function DashboardLayout() {
 
     { label: "Appointments", path: "/appointments" },
     { label: "Report", path: "/report" },
+    ...(isDoctor ? [{ label: "Doctor Portal", path: "/doctor-portal" }] : []),
+    ...(isAdmin ? [{ label: "Doctor Approvals", path: "/admin/doctors" }] : []),
   ];
 
   const bottomItems = [
@@ -42,8 +67,9 @@ export default function DashboardLayout() {
   return (
     <div className="min-h-screen bg-[#fdf7f8]">
       {/* Mobile Header */}
-      <header className="fixed left-0 right-0 top-0 z-40 flex h-16 items-center justify-between border-b border-[#f1e4e7] bg-white px-5 lg:hidden">
+      <header className="fixed left-0 right-0 top-0 z-40 flex h-16 items-center justify-between border-b border-[#f1e4e7] bg-white px-5 print:hidden lg:hidden">
         <button
+          type="button"
           onClick={() => setSidebarOpen(true)}
           aria-label="Open menu"
           className="text-xl text-[#292331]"
@@ -68,7 +94,7 @@ export default function DashboardLayout() {
 
       {/* Sidebar */}
       <aside
-        className={`fixed left-0 top-0 z-50 flex h-dvh w-64 flex-col border-r border-[#f1e4e7] bg-white px-5 py-6 transition-transform duration-300 lg:translate-x-0 ${sidebarOpen ? "translate-x-0" : "-translate-x-full"
+        className={`fixed left-0 top-0 z-50 flex h-dvh print:hidden w-64 flex-col border-r border-[#f1e4e7] bg-white px-5 py-6 transition-transform duration-300 lg:translate-x-0 ${sidebarOpen ? "translate-x-0" : "-translate-x-full"
           }`}
       >
         <div className="flex items-center justify-between px-2">
@@ -81,6 +107,7 @@ export default function DashboardLayout() {
           </Link>
 
           <button
+            type="button"
             onClick={() => setSidebarOpen(false)}
             aria-label="Close menu"
             className="text-gray-500 lg:hidden"
@@ -89,11 +116,12 @@ export default function DashboardLayout() {
           </button>
         </div>
 
-        <nav className="mt-10 flex-1 space-y-1">
+        <nav className="mt-6 min-h-0 flex-1 space-y-1 overflow-y-auto">
           {navItems.map((item) => (
             <NavLink
               key={item.path}
               to={item.path}
+              end
               onClick={() => setSidebarOpen(false)}
               className={({ isActive }) =>
                 `block rounded-xl px-4 py-3 text-sm font-medium transition ${isActive
@@ -112,6 +140,7 @@ export default function DashboardLayout() {
             <NavLink
               key={item.path}
               to={item.path}
+              end
               onClick={() => setSidebarOpen(false)}
               className={({ isActive }) =>
                 `block rounded-xl px-4 py-3 text-sm font-medium transition ${isActive
@@ -125,6 +154,7 @@ export default function DashboardLayout() {
           ))}
 
           <button
+            type="button"
             onClick={handleLogout}
             className="w-full rounded-xl px-4 py-3 text-left text-sm font-medium text-gray-500 transition hover:bg-[#fdf7f8] hover:text-[#292331]"
           >
@@ -134,9 +164,13 @@ export default function DashboardLayout() {
       </aside>
 
       {/* Main */}
-      <main className="min-h-screen lg:ml-64">
+      <main className="min-h-screen lg:ml-64 print:ml-0">
         <div className="px-5 pb-10 pt-20 sm:px-8 lg:px-10 lg:pt-8">
-          <Outlet />
+          <Suspense
+            fallback={<p role="status" className="text-sm text-gray-500">Loading...</p>}
+          >
+            <Outlet />
+          </Suspense>
         </div>
       </main>
     </div>

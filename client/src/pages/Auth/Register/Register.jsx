@@ -36,9 +36,12 @@ export default function Register() {
       });
 
       // clears any old token, then stores the new one
+      if (!data?.token) {
+        throw new Error("Registration failed. Please try again.");
+      }
       saveToken(data.token, false); // session only: safer on shared devices
 
-      navigate("/onboarding");
+      navigate("/onboarding", { replace: true });
     } catch (error) {
       setError(error.message);
     } finally {
@@ -212,6 +215,13 @@ export default function Register() {
                 </button>
 
               </form>
+
+              <p className="mt-6 text-center text-sm text-gray-500">
+                Are you a doctor?{" "}
+                <Link to="/register/doctor" className="font-medium text-[#e58da4] hover:text-[#d47790]">
+                  Join as a doctor
+                </Link>
+              </p>
 
             </div>
           </div>

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import AuthLayout from "../../../layouts/AuthLayout/AuthLayout";
 import loginImage from "../../../assets/login.jpeg";
-import { resetPassword } from "../../../services/api";
+import { clearToken, resetPassword } from "../../../services/api";
 
 export default function ResetPassword() {
   const { token } = useParams();
@@ -34,8 +34,9 @@ export default function ResetPassword() {
     try {
       setLoading(true);
       await resetPassword(token, password);
+      clearToken(); // any old session on this device is no longer valid
       setDone(true);
-      timerRef.current = setTimeout(() => navigate("/login"), 2500);
+      timerRef.current = setTimeout(() => navigate("/login", { replace: true }), 2500);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -48,21 +49,24 @@ export default function ResetPassword() {
 
   return (
     <AuthLayout>
-      <div className="w-full max-w-[1080px] overflow-hidden rounded-[28px] bg-white shadow-[0_20px_60px_rgba(170,95,120,0.12)]">
-        <div className="grid min-h-[650px] md:grid-cols-2">
+      <div className="w-full max-w-270 overflow-hidden rounded-[28px] bg-white shadow-[0_20px_60px_rgba(170,95,120,0.12)]">
+        <div className="grid min-h-162.5 md:grid-cols-2">
           <div className="hidden md:block">
             <img src={loginImage} alt="" className="h-full w-full object-cover" />
           </div>
 
           <div className="flex items-center justify-center px-10 py-12 sm:px-14">
-            <div className="w-full max-w-[400px]">
+            <div className="w-full max-w-100">
               <h1 className="font-serif text-[40px] font-semibold tracking-[-0.5px] text-[#292331]">
                 New Password
               </h1>
 
               {done ? (
                 <p role="status" className="mt-6 rounded-xl bg-[#f0faf3] p-4 text-sm text-green-700">
-                  Password updated. Redirecting you to log in...
+                  Password updated. Redirecting you to log in...{" "}
+                  <Link to="/login" replace className="font-medium underline">
+                    Log in now
+                  </Link>
                 </p>
               ) : (
                 <form onSubmit={handleSubmit} className="mt-8 space-y-5">
@@ -118,7 +122,7 @@ export default function ResetPassword() {
                   <button
                     type="submit"
                     disabled={loading}
-                    className="h-[52px] w-full rounded-xl bg-[#e58da4] text-sm font-semibold text-white transition hover:bg-[#d97d96] disabled:opacity-60"
+                    className="h-13 w-full rounded-xl bg-[#e58da4] text-sm font-semibold text-white transition hover:bg-[#d97d96] disabled:opacity-60"
                   >
                     {loading ? "Saving..." : "Reset Password"}
                   </button>

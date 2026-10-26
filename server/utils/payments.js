@@ -52,7 +52,10 @@ const issueRefund = async (appointmentId) => {
     return { refunded: true };
   } catch (error) {
     // Razorpay says it was already refunded: that is a success
-    if (/already.*refund|fully refunded/i.test(error.message)) {
+    if (
+      /already.*refund|fully refunded/i.test(error.message) ||
+      /already.*refund|fully refunded/i.test(error.description || "")
+    ) {
       await Appointment.updateOne(
         { _id: appointment._id },
         { $set: { paymentStatus: "refunded", refundedAt: new Date() } }
@@ -86,7 +89,7 @@ const retryPendingRefunds = async () => {
     if (item._id) {
       // a stuck "processing" one has to go back to "pending" before it can be claimed
       await Appointment.updateOne(
-        { _id: item._id, paymentStatus: "refund_processing" },
+        { _id: item._id, paymentStatus: "refund_processing", updatedAt: { $lt: stuck } },
         { $set: { paymentStatus: "refund_pending" } }
       );
       await issueRefund(item._id);
@@ -123,7 +126,10 @@ const finalizePaid = async (appointmentId, paymentId) => {
 
   // already handled (the browser and the webhook both report the same payment)
   if (appointment.razorpayPaymentId === paymentId) {
-    return { outcome: "already", appointment };
+    // a payment that was refunded must not look like a confirmed booking
+    return ["booked", "completed"].includes(appointment.status)
+      ? { outcome: "already", appointment }
+      : { outcome: "refunded" };
   }
 
   // paid after the hold ran out: still fine if nobody else took the slot

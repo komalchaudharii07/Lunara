@@ -123,7 +123,7 @@ const buildReport = async (userId, { from, to, todayKey, includeNotes }) => {
 const resolveRange = (query = {}) => {
   const today = isDateKey(query.today)
     ? query.today
-    : new Date().toISOString().slice(0, 10);
+    : new Date(Date.now() + 330 * 60 * 1000).toISOString().slice(0, 10);
 
   const to = isDateKey(query.to) ? query.to : today;
   const from = isDateKey(query.from)
