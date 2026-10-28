@@ -51,8 +51,8 @@ export default function Register() {
 
   return (
     <AuthLayout>
-      <div className="w-full max-w-[1080px] overflow-hidden rounded-[28px] bg-white shadow-[0_20px_60px_rgba(170,95,120,0.12)]">
-        <div className="grid min-h-[650px] md:grid-cols-2">
+      <div className="w-full max-w-270 overflow-hidden rounded-[28px] bg-white shadow-[0_20px_60px_rgba(170,95,120,0.12)]">
+        <div className="grid min-h-162.5 md:grid-cols-2">
 
           <div className="hidden md:block">
             <img
@@ -63,7 +63,7 @@ export default function Register() {
           </div>
 
           <div className="flex items-center justify-center px-10 py-12 sm:px-14">
-            <div className="w-full max-w-[400px]">
+            <div className="w-full max-w-100">
 
               <div>
                 <h1 className="font-serif text-[40px] font-semibold tracking-[-0.5px] text-[#292331]">
@@ -100,7 +100,7 @@ export default function Register() {
                     onChange={(e) => setName(e.target.value)}
                     required
                     maxLength={100}
-                    className="h-[52px] w-full rounded-xl border border-gray-200 px-4 text-sm outline-none focus:border-[#e58da4]"
+                    className="h-13 w-full rounded-xl border border-gray-200 px-4 text-sm outline-none focus:border-[#e58da4]"
                   />
                 </div>
 
@@ -120,7 +120,7 @@ export default function Register() {
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     required
-                    className="h-[52px] w-full rounded-xl border border-gray-200 px-4 text-sm outline-none focus:border-[#e58da4]"
+                    className="h-13 w-full rounded-xl border border-gray-200 px-4 text-sm outline-none focus:border-[#e58da4]"
                   />
                 </div>
 
@@ -142,7 +142,7 @@ export default function Register() {
                     required
                     minLength={8}
                     maxLength={72}
-                    className="h-[52px] w-full rounded-xl border border-gray-200 px-4 text-sm outline-none focus:border-[#e58da4]"
+                    className="h-13 w-full rounded-xl border border-gray-200 px-4 text-sm outline-none focus:border-[#e58da4]"
                   />
                 </div>
 
@@ -165,7 +165,7 @@ export default function Register() {
                     required
                     min="10"
                     max="100"
-                    className="h-[52px] w-full rounded-xl border border-gray-200 px-4 text-sm outline-none focus:border-[#e58da4]"
+                    className="h-13 w-full rounded-xl border border-gray-200 px-4 text-sm outline-none focus:border-[#e58da4]"
                   />
                 </div>
 
@@ -209,7 +209,7 @@ export default function Register() {
                 <button
                   type="submit"
                   disabled={loading}
-                  className="h-[52px] w-full rounded-xl bg-[#e58da4] text-sm font-semibold text-white transition hover:bg-[#d97d96] disabled:cursor-not-allowed disabled:opacity-60"
+                  className="h-13 w-full rounded-xl bg-[#e58da4] text-sm font-semibold text-white transition hover:bg-[#d97d96] disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   {loading ? "Creating account..." : "Create Account"}
                 </button>

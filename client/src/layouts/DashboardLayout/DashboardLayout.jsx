@@ -49,6 +49,7 @@ export default function DashboardLayout() {
     { label: "Doctors", path: "/doctors" },
 
     { label: "Appointments", path: "/appointments" },
+    { label: "My Records", path: "/records" },
     { label: "Report", path: "/report" },
     ...(isDoctor ? [{ label: "Doctor Portal", path: "/doctor-portal" }] : []),
     ...(isAdmin ? [{ label: "Doctor Approvals", path: "/admin/doctors" }] : []),

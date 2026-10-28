@@ -12,6 +12,18 @@ const medicineSchema = new mongoose.Schema(
   { _id: false }
 );
 
+// an older version of the prescription, kept when the doctor edits it
+const revisionSchema = new mongoose.Schema(
+  {
+    at: { type: Date, required: true },
+    diagnosis: { type: String, default: "" },
+    medicines: { type: [medicineSchema], default: [] },
+    advice: { type: String, default: "" },
+    followUp: { type: String, default: "" },
+  },
+  { _id: false }
+);
+
 // written by the doctor after (or during) the visit; only the patient and that doctor can read it
 const prescriptionSchema = new mongoose.Schema(
   {
@@ -21,6 +33,8 @@ const prescriptionSchema = new mongoose.Schema(
     followUp: { type: String, trim: true, maxlength: 200, default: "" },
     issuedAt: { type: Date },
     updatedAt: { type: Date },
+    // the last 20 earlier versions (newest last); only the doctor can see them
+    revisions: { type: [revisionSchema], default: [] },
   },
   { _id: false }
 );
@@ -79,6 +93,11 @@ const appointmentSchema = new mongoose.Schema(
 
     // the doctor's prescription / visit summary
     prescription: { type: prescriptionSchema },
+
+    // moving the visit to another time (once, and not within 2 hours of the start)
+    rescheduleCount: { type: Number, default: 0, min: 0 },
+    previousStartsAt: { type: Date },
+    rescheduledAt: { type: Date },
 
     cancelledBy: { type: String, enum: ["user", "doctor"] },
     cancelledAt: { type: Date },

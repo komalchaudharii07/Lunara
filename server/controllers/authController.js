@@ -13,7 +13,7 @@ const Review = require("../models/Review");
 const sendEmail = require("../utils/sendEmail");
 const Appointment = require("../models/Appointment");
 const { issueRefund } = require("../utils/payments");
-
+const { notifyAdminsOfDoctor } = require("../utils/adminAlerts");
 const MIN_PASSWORD = 8;
 const MAX_PASSWORD_BYTES = 72; // bcrypt ignores everything after 72 BYTES
 const BCRYPT_COST = 12;
@@ -176,6 +176,7 @@ const register = async (req, res) => {
         });
         user.doctorId = doctorProfile._id;
         await user.save();
+               notifyAdminsOfDoctor(doctorProfile, user, "new");
       } catch (err) {
         await User.deleteOne({ _id: user._id }); // don't leave a half-made account
         throw err;

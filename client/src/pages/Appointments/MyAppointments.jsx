@@ -9,6 +9,7 @@ import {
 } from "../../services/api";
 import { formatDateTime, formatTime } from "../../utils/dates";
 import { openCheckout } from "../../utils/razorpayCheckout";
+import RescheduleBox from "./RescheduleBox";
 
 const MIN = 60 * 1000;
 const CANCEL_BEFORE = 2 * 60 * MIN;
@@ -47,6 +48,7 @@ export default function MyAppointments() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [busyId, setBusyId] = useState("");
+  const [movingId, setMovingId] = useState("");
   const [now, setNow] = useState(() => Date.now());
 
   // keeps "Join" buttons and cancel rules fresh while the page stays open
@@ -280,6 +282,12 @@ export default function MyAppointments() {
                 )}
 
                 {money && <p className="mt-2 text-xs text-gray-500">{money}</p>}
+                {a.razorpayPaymentId && a.paymentStatus === "paid" && (
+                  <p className="mt-1 text-xs text-gray-400">Payment reference: {a.razorpayPaymentId}</p>
+                )}
+                {a.rescheduleCount > 0 && a.status === "booked" && (
+                  <p className="mt-1 text-xs text-gray-400">This visit was moved once.</p>
+                )}
 
                 {a.prescription?.issuedAt && (
                   <Link
@@ -352,6 +360,16 @@ export default function MyAppointments() {
                         </span>
                       )}
 
+                      {canCancel && (a.rescheduleCount || 0) < 1 && (
+                        <button
+                          type="button"
+                          onClick={() => setMovingId(movingId === a._id ? "" : a._id)}
+                          className="rounded-xl border border-[#eadde1] px-4 py-2.5 text-sm text-[#292331] hover:border-[#e58da4]"
+                        >
+                          Reschedule
+                        </button>
+                      )}
+
                       {canCancel ? (
                         <button
                           type="button"
@@ -367,6 +385,18 @@ export default function MyAppointments() {
                         </span>
                       )}
                     </div>
+
+                    {movingId === a._id && (
+                      <RescheduleBox
+                        appointment={a}
+                        onClose={() => setMovingId("")}
+                        onDone={async () => {
+                          setMovingId("");
+                          setNotice("Appointment moved. We emailed you the new time.");
+                          await load();
+                        }}
+                      />
+                    )}
                   </>
                 )}
               </div>

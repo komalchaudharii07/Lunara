@@ -44,6 +44,54 @@ function parseDoctorInput(body = {}, { requireAll = true, withLicence = true } =
     else value.bio = bio;
   }
 
+  // phone: needed at sign-up, can be changed later
+  if (has("phone") || (requireAll && withLicence)) {
+    const phone = text(body.phone, 20);
+    const digits = phone.replace(/\D/g, "");
+    if (!/^\+?[0-9 ()-]{7,20}$/.test(phone) || digits.length < 7 || digits.length > 15) {
+      problems.push("Please enter a valid phone number");
+    } else {
+      value.phone = phone;
+    }
+  }
+
+  // optional clinic place (shown on the map)
+  for (const [key, label, max] of [
+    ["clinicName", "Clinic name", 120],
+    ["clinicAddress", "Clinic address", 250],
+  ]) {
+    if (has(key)) {
+      const v = text(body[key], max);
+      if (v.length > max) problems.push(`${label} must be ${max} characters or fewer`);
+      else value[key] = v;
+    }
+  }
+  if (has("lat") || has("lng")) {
+    const clear = (body.lat === null || body.lat === "") && (body.lng === null || body.lng === "");
+    if (clear) {
+      problems.push("Clinic location is required. Please set your pin on the map.");
+    } else {
+      const lat = Number(body.lat);
+      const lng = Number(body.lng);
+      if (!Number.isFinite(lat) || lat < -90 || lat > 90 || !Number.isFinite(lng) || lng < -180 || lng > 180) {
+        problems.push("Clinic location isn't valid. Please set it again.");
+      } else {
+        value.lat = Math.round(lat * 1e6) / 1e6;
+        value.lng = Math.round(lng * 1e6) / 1e6;
+      }
+    }
+  }
+
+  // a new doctor must give the clinic address and the map pin
+  if (requireAll && withLicence) {
+    if (!value.clinicAddress || value.clinicAddress.length < 5) {
+      problems.push("Clinic address is required");
+    }
+    if (value.lat === undefined || value.lng === undefined) {
+      problems.push("Clinic location is required. Please set your pin on the map.");
+    }
+  }
+
   if (withLicence) {
     problems.push(field("registrationCouncil", "Medical council", 100));
     const reg = field("registrationNumber", "Registration number", 40, { min: 4 });

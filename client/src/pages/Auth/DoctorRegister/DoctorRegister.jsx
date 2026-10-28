@@ -1,7 +1,15 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import AuthLayout from "../../../layouts/AuthLayout/AuthLayout";
-import { registerUser, saveToken } from "../../../services/api";
+import {
+  registerUser,
+  saveToken,
+  uploadDoctorDocuments,
+  uploadDoctorPhoto,
+} from "../../../services/api";
+
+const MAX_BYTES = 5 * 1024 * 1024;
+const DOC_TYPES = ["application/pdf", "image/jpeg", "image/png"];
 
 const field =
   "h-[52px] w-full rounded-xl border border-gray-200 px-4 text-sm outline-none focus:border-[#e58da4]";
@@ -13,6 +21,7 @@ export default function DoctorRegister() {
   const [form, setForm] = useState({
     name: "",
     email: "",
+    phone: "",
     password: "",
     specialization: "",
     qualification: "",
@@ -21,15 +30,95 @@ export default function DoctorRegister() {
     registrationCouncil: "",
     registrationNumber: "",
     bio: "",
+    clinicName: "",
+    clinicAddress: "",
+    lat: "",
+    lng: "",
   });
+  const [locating, setLocating] = useState(false);
+  const [docs, setDocs] = useState([]);
+  const [photo, setPhoto] = useState(null);
   const [accepted, setAccepted] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
   const set = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.value }));
 
+  const useMyLocation = () => {
+    if (!navigator.geolocation) return setError("Your browser can't share its location.");
+    setLocating(true);
+    setError("");
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setForm((f) => ({
+          ...f,
+          lat: Math.round(pos.coords.latitude * 1e6) / 1e6,
+          lng: Math.round(pos.coords.longitude * 1e6) / 1e6,
+        }));
+        setLocating(false);
+      },
+      () => {
+        setError("Couldn't get your location. Allow location access, or find it from the address.");
+        setLocating(false);
+      },
+      { timeout: 10000 }
+    );
+  };
+
+  // finds the map point for the typed address (OpenStreetMap)
+  const findFromAddress = async () => {
+    const q = form.clinicAddress.trim();
+    if (!q) return setError("Type the clinic address first.");
+    setLocating(true);
+    setError("");
+    try {
+      const res = await fetch(
+        `https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=in&q=${encodeURIComponent(q)}`
+      );
+      const rows = await res.json();
+      if (!rows?.[0]) throw new Error("We couldn't find that address on the map. Add the area or pincode.");
+      setForm((f) => ({
+        ...f,
+        lat: Math.round(Number(rows[0].lat) * 1e6) / 1e6,
+        lng: Math.round(Number(rows[0].lon) * 1e6) / 1e6,
+      }));
+    } catch (err) {
+      setError(err.message || "The map search isn't working right now.");
+    } finally {
+      setLocating(false);
+    }
+  };
+
+  const pickDocs = (e) => {
+    const list = [...e.target.files];
+    if (list.length > 3) return setError("You can add up to 3 documents.");
+    if (list.some((f) => !DOC_TYPES.includes(f.type))) return setError("Documents must be PDF, JPG or PNG.");
+    if (list.some((f) => f.size > MAX_BYTES)) return setError("Each document must be 5 MB or smaller.");
+    setError("");
+    setDocs(list);
+  };
+
+  const pickPhoto = (e) => {
+    const f = e.target.files[0];
+    if (!f) return setPhoto(null);
+    if (!["image/jpeg", "image/png"].includes(f.type)) return setError("The photo must be a JPG or PNG.");
+    if (f.size > 2 * 1024 * 1024) return setError("The photo must be 2 MB or smaller.");
+    setError("");
+    setPhoto(f);
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
+
+    if (docs.length === 0) {
+      setError("Please add your medical registration certificate (PDF, JPG or PNG).");
+      return;
+    }
+
+    if (form.lat === "" || form.lng === "") {
+      setError("Please set your clinic location on the map (use the buttons under the address).");
+      return;
+    }
     if (!accepted) {
       setError("Please accept the Terms and Privacy Policy to continue.");
       return;
@@ -46,6 +135,7 @@ export default function DoctorRegister() {
         password: form.password,
         acceptedTerms: accepted,
         doctor: {
+          phone: form.phone.trim(),
           specialization: form.specialization.trim(),
           qualification: form.qualification.trim(),
           experience: Number(form.experience),
@@ -53,11 +143,23 @@ export default function DoctorRegister() {
           registrationCouncil: form.registrationCouncil.trim(),
           registrationNumber: form.registrationNumber.trim(),
           bio: form.bio.trim(),
+          clinicName: form.clinicName.trim(),
+          clinicAddress: form.clinicAddress.trim(),
+          lat: Number(form.lat),
+          lng: Number(form.lng),
         },
       });
 
       if (!data?.token) throw new Error("Registration failed. Please try again.");
       saveToken(data.token, false);
+
+      // the files go up with the new login; if this fails the doctor can retry in the portal
+      try {
+        await uploadDoctorDocuments(docs);
+        if (photo) await uploadDoctorPhoto(photo);
+      } catch {
+        /* the portal shows what is still missing */
+      }
 
       navigate("/doctor-portal", { replace: true });
     } catch (err) {
@@ -103,6 +205,13 @@ export default function DoctorRegister() {
           </div>
 
           <div className="sm:col-span-2">
+            <label htmlFor="phone" className={label}>Phone number</label>
+            <input id="phone" type="tel" required maxLength={20} value={form.phone}
+              onChange={set("phone")} autoComplete="tel" placeholder="+91 98765 43210" className={field} />
+            <p className="mt-1 text-xs text-gray-400">Only the Lunara team sees this. Patients never do.</p>
+          </div>
+
+          <div className="sm:col-span-2">
             <label htmlFor="password" className={label}>Password</label>
             <input id="password" type="password" required minLength={8} maxLength={72}
               value={form.password} onChange={set("password")} autoComplete="new-password"
@@ -145,6 +254,54 @@ export default function DoctorRegister() {
             <label htmlFor="regno" className={label}>Registration number</label>
             <input id="regno" required minLength={4} maxLength={40} value={form.registrationNumber}
               onChange={set("registrationNumber")} className={field} />
+          </div>
+
+          <div className="space-y-3 rounded-2xl bg-[#fdf7f8] p-4 sm:col-span-2">
+            <p className="text-sm font-medium text-[#292331]">Verification documents</p>
+            <div>
+              <label htmlFor="docs" className="text-xs text-gray-500">
+                Medical registration certificate (and ID proof if you like). PDF, JPG or PNG, up to 3 files, 5 MB each.
+              </label>
+              <input id="docs" type="file" multiple required accept=".pdf,.jpg,.jpeg,.png"
+                onChange={pickDocs} className="mt-1 block w-full text-sm text-gray-600" />
+              {docs.length > 0 && (
+                <p className="mt-1 text-xs text-green-600">{docs.map((d) => d.name).join(", ")}</p>
+              )}
+            </div>
+            <div>
+              <label htmlFor="photo" className="text-xs text-gray-500">
+                Profile photo (optional). JPG or PNG, 2 MB.
+              </label>
+              <input id="photo" type="file" accept=".jpg,.jpeg,.png" onChange={pickPhoto}
+                className="mt-1 block w-full text-sm text-gray-600" />
+            </div>
+          </div>
+
+          <div className="space-y-3 rounded-2xl bg-[#fdf7f8] p-4 sm:col-span-2">
+            <p className="text-sm font-medium text-[#292331]">Your clinic location</p>
+            <p className="text-xs text-gray-500">
+              Patients near you will see you on the map and can book you from there.
+            </p>
+            <input aria-label="Clinic name" placeholder="Clinic or hospital name" maxLength={120}
+              value={form.clinicName} onChange={set("clinicName")} className={field} />
+            <input aria-label="Clinic address" required minLength={5} maxLength={250}
+              placeholder="Address, area, city, pincode" value={form.clinicAddress}
+              onChange={set("clinicAddress")} className={field} />
+            <div className="flex flex-wrap items-center gap-3">
+              <button type="button" onClick={findFromAddress} disabled={locating}
+                className="rounded-lg border border-[#eadde1] bg-white px-3 py-2 text-xs font-medium text-[#292331] hover:border-[#e58da4] disabled:opacity-50">
+                Find on map from address
+              </button>
+              <button type="button" onClick={useMyLocation} disabled={locating}
+                className="rounded-lg border border-[#eadde1] bg-white px-3 py-2 text-xs font-medium text-[#292331] hover:border-[#e58da4] disabled:opacity-50">
+                Use my current location
+              </button>
+              {form.lat !== "" && form.lng !== "" ? (
+                <span className="text-xs text-green-600">Pin set ({form.lat}, {form.lng})</span>
+              ) : (
+                <span className="text-xs text-red-500">Pin not set yet</span>
+              )}
+            </div>
           </div>
 
           <div className="sm:col-span-2">

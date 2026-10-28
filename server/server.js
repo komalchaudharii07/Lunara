@@ -43,6 +43,8 @@ const reviewRoutes = require("./routes/reviewRoutes");
 const contactRoutes = require("./routes/contactRoutes");
 const appointmentRoutes = require("./routes/appointmentRoutes");
 const reportRoutes = require("./routes/reportRoutes");
+const fileRoutes = require("./routes/fileRoutes");
+const medicalReportRoutes = require("./routes/medicalReportRoutes");
 
 const paymentRoutes = require("./routes/paymentRoutes");
 const { expireStaleHolds, retryPendingRefunds } = require("./utils/payments");
@@ -74,7 +76,7 @@ app.use(
 // so keep a copy of the raw body for that one route
 app.use(
   express.json({
-    limit: "10kb",
+    limit: "32kb", // a prescription with 15 medicines is several KB
     verify: (req, res, buf) => {
       if (req.originalUrl.startsWith("/api/payments/webhook")) req.rawBody = buf;
     },
@@ -99,7 +101,10 @@ app.use(
     legacyHeaders: false,
     message: { message: "Too many requests. Please try again later." },
         // Razorpay's server calls the webhook. It is protected by its signature instead.
-    skip: (req) => req.originalUrl.startsWith("/api/payments/webhook"),
+    // private files have their own per-user limit, and a page of doctor photos is many requests
+    skip: (req) =>
+      req.originalUrl.startsWith("/api/payments/webhook") ||
+      req.originalUrl.startsWith("/api/files/"),
   })
 );
 
@@ -115,6 +120,8 @@ app.use("/api/contact", contactRoutes);
 app.use("/api/appointments", appointmentRoutes);
 app.use("/api/reports", reportRoutes);
 app.use("/api/payments", paymentRoutes);
+app.use("/api/files", fileRoutes);
+app.use("/api/medical-reports", medicalReportRoutes);
 
 app.get("/", (req, res) => {
   res.json({ message: "Lunara API is running" });

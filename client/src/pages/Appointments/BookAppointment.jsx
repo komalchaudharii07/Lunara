@@ -101,14 +101,19 @@ export default function BookAppointment() {
     setVerifying(true);
     setError("");
     try {
-      await verifyPayment({
+      const verified = await verifyPayment({
         appointmentId: booking.appointment._id,
         razorpay_order_id: orderId,
         razorpay_payment_id: paymentId,
         razorpay_signature: signature,
       });
       setPending(null);
-      setDone({ appointment: booking.appointment, crisis: booking.crisis, paid: true });
+      setDone({
+        appointment: booking.appointment,
+        crisis: booking.crisis,
+        paid: true,
+        receipt: verified?.receipt,
+      });
     } catch (err) {
       setError(err.message);
       // a payment that arrived too late is refunded: the held booking is gone
@@ -228,7 +233,12 @@ export default function BookAppointment() {
             {done.appointment.doctorName} · {formatDateTime(done.appointment.startsAt)}
           </p>
           {done.paid && (
-            <p className="mt-1 text-sm text-green-600">Payment received. Thank you!</p>
+            <p className="mt-1 text-sm text-green-600">
+              Payment received{done.receipt?.amountPaise ? ` (${rupees(done.receipt.amountPaise / 100)})` : ""}. Thank you!
+            </p>
+          )}
+          {done.receipt?.paymentId && (
+            <p className="mt-1 text-xs text-gray-400">Reference: {done.receipt.paymentId}</p>
           )}
           <p className="mt-2 text-xs leading-5 text-gray-500">
             The video call link appears on your Appointments page. We also sent

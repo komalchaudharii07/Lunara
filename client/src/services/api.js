@@ -41,13 +41,15 @@ async function request(
     method = "GET",
     body,
     auth = true,
-    timeout = DEFAULT_TIMEOUT_MS,
+    timeout = body instanceof FormData ? 60000 : DEFAULT_TIMEOUT_MS,
     logoutOn401 = auth, // a wrong-password 401 must not end the session
   } = {}
 ) {
   const headers = {};
+  // file uploads: the browser sets the multipart header itself
+  const isForm = typeof FormData !== "undefined" && body instanceof FormData;
 
-  if (body !== undefined) {
+  if (body !== undefined && !isForm) {
     headers["Content-Type"] = "application/json";
   }
 
@@ -67,7 +69,7 @@ async function request(
       response = await fetch(`${API_URL}${path}`, {
         method,
         headers,
-        body: body !== undefined ? JSON.stringify(body) : undefined,
+        body: body === undefined ? undefined : isForm ? body : JSON.stringify(body),
         signal: controller.signal,
       });
     } catch (err) {
@@ -217,6 +219,126 @@ export const reportPost = (postId, reason) =>
 // DOCTORS AND REVIEWS
 export const getDoctors = () => request("/doctors");
 
+// PRIVATE FILES: they are only available to logged-in people who are allowed to see them.
+// The browser can't send a login header from an <img> or a link, so the file is fetched here.
+export const fetchFileBlob = async (fileId, { download = false } = {}) => {
+  const token = getToken();
+  let response;
+  try {
+    response = await fetch(
+      `${API_URL}/files/${encodeURIComponent(fileId)}${download ? "?download=1" : ""}`,
+      { headers: token ? { Authorization: `Bearer ${token}` } : {} }
+    );
+  } catch {
+    throw new Error("Cannot reach the server. Check your connection and try again.");
+  }
+  if (!response.ok) {
+    throw new Error(response.status === 404 ? "File not found." : "Couldn't open the file.");
+  }
+  return response.blob();
+};
+
+// saves a private file to the person's device
+export const downloadFile = async (fileId, filename = "file") => {
+  const blob = await fetchFileBlob(fileId, { download: true });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
+};
+
+// opens a private PDF or picture in a new tab
+export const openFile = async (fileId) => {
+  const win = window.open("", "_blank");
+  try {
+    const blob = await fetchFileBlob(fileId);
+    const url = URL.createObjectURL(blob);
+    if (win) win.location.href = url;
+    else window.location.href = url;
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+  } catch (err) {
+    if (win) win.close();
+    throw err;
+  }
+};
+
+// downloads a PDF (or any file) made by an API route, using the login
+export const downloadFromApi = async (path, filename) => {
+  const token = getToken();
+  let response;
+  try {
+    response = await fetch(`${API_URL}${path}`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+  } catch {
+    throw new Error("Cannot reach the server. Check your connection and try again.");
+  }
+  if (!response.ok) throw new Error("Couldn't download the file.");
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
+};
+
+export const downloadPrescriptionPdf = (appointmentId) =>
+  downloadFromApi(
+    `/appointments/${encodeURIComponent(appointmentId)}/prescription/pdf`,
+    "lunara-prescription.pdf"
+  );
+
+// medical reports (doctor uploads, patient reads)
+export const uploadMedicalReport = ({ appointmentId, title, notes, file }) => {
+  const form = new FormData();
+  form.append("appointmentId", appointmentId);
+  form.append("title", title);
+  form.append("notes", notes || "");
+  form.append("file", file);
+  return request("/medical-reports", { method: "POST", body: form });
+};
+
+export const getAppointmentReports = (appointmentId) =>
+  request(`/medical-reports/appointment/${encodeURIComponent(appointmentId)}`);
+
+export const getMyReports = () => request("/medical-reports/mine");
+
+export const deleteMedicalReport = (id) =>
+  request(`/medical-reports/${encodeURIComponent(id)}`, { method: "DELETE" });
+
+// doctor documents and photo
+export const uploadDoctorPhoto = (file) => {
+  const form = new FormData();
+  form.append("photo", file);
+  return request("/doctors/me/photo", { method: "PUT", body: form });
+};
+
+export const uploadDoctorDocuments = (files) => {
+  const form = new FormData();
+  [...files].forEach((f) => form.append("documents", f));
+  return request("/doctors/me/documents", { method: "POST", body: form });
+};
+
+export const removeDoctorDocument = (fileId) =>
+  request(`/doctors/me/documents/${encodeURIComponent(fileId)}`, { method: "DELETE" });
+
+export const resubmitDoctor = () => request("/doctors/me/resubmit", { method: "POST" });
+
+// registered doctors with a clinic near a point (for the Nearby map)
+export const getNearbyDoctors = ({ lat, lng, km = 25 } = {}) =>
+  lat === undefined || lng === undefined
+    ? request("/doctors/nearby")
+    : request(
+        `/doctors/nearby?lat=${encodeURIComponent(lat)}&lng=${encodeURIComponent(lng)}&km=${encodeURIComponent(km)}`
+      );
+
 // a doctor's own profile
 export const getMyDoctorProfile = () => request("/doctors/me/profile");
 
@@ -285,6 +407,12 @@ export const getAppointmentSlots = (doctorId, date) =>
   request(
     `/appointments/slots/${encodeURIComponent(doctorId)}?date=${encodeURIComponent(date)}`
   );
+
+export const rescheduleAppointment = (id, startsAt) =>
+  request(`/appointments/${encodeURIComponent(id)}/reschedule`, {
+    method: "PATCH",
+    body: { startsAt },
+  });
 
 export const bookAppointment = (body) =>
   request("/appointments", { method: "POST", body });

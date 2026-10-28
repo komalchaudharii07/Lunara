@@ -22,12 +22,14 @@ const Profile = lazy(() => import("./pages/Profile/Profile"));
 const Settings = lazy(() => import("./pages/Settings/Settings"));
 const Community = lazy(() => import("./pages/Community/Community"));
 const Doctors = lazy(() => import("./pages/Doctors/Doctors"));
+const DoctorProfile = lazy(() => import("./pages/Doctors/DoctorProfile"));
 const Appointments = lazy(() => import("./pages/Appointments/MyAppointments"));
 // adjust these three import paths to where your files really are
 const BookAppointment = lazy(() => import("./pages/Appointments/BookAppointment"));
 const DoctorPortal = lazy(() => import("./pages/Appointments/DoctorPortal"));
 const Report = lazy(() => import("./pages/Reports/Report"));
 const PrescriptionPage = lazy(() => import("./pages/Prescription/PrescriptionPage"));
+const Records = lazy(() => import("./pages/Records/Records"));
 const AdminDoctors = lazy(() => import("./pages/Admin/AdminDoctors"));
 
 function Loading() {
@@ -83,9 +85,11 @@ function App() {
               <Route path="/settings" element={<Settings />} />
               <Route path="/community" element={<Community />} />
               <Route path="/doctors" element={<Doctors />} />
+              <Route path="/doctors/:id" element={<DoctorProfile />} />
               <Route path="/doctors/:id/book" element={<BookAppointment />} />
               <Route path="/appointments" element={<Appointments />} />
               <Route path="/appointments/:id/prescription" element={<PrescriptionPage />} />
+              <Route path="/records" element={<Records />} />
               <Route path="/doctor-portal" element={<DoctorPortal />} />
               <Route path="/report" element={<Report />} />
               <Route path="/admin/doctors" element={<AdminDoctors />} />

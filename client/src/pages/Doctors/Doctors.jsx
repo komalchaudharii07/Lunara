@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { getDoctors } from "../../services/api";
 import NearbyMap from "../../components/doctors/NearbyMap";
 import { Link } from "react-router-dom";
+import SecureImage from "../../components/common/SecureImage";
 
 const careOptions = [
   {
@@ -317,9 +318,7 @@ export default function Doctors() {
                       >
                         <div className="flex items-start justify-between gap-4">
                           <div className="flex items-center gap-4">
-                            <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-[#fdf1f4] text-lg font-semibold text-[#d77f97]">
-                              {doctor.name?.charAt(0)}
-                            </div>
+                            <SecureImage fileId={doctor.photo} name={doctor.name} size={56} />
 
                             <div>
                               <h3 className="font-semibold text-[#292331]">
@@ -366,14 +365,20 @@ export default function Doctors() {
                         <p className="mt-4 text-sm text-gray-500">
                           {doctor.qualification}
                         </p>
-
-                        
-                                                  <Link
-                          to={`/doctors/${doctor._id}/book`}
-                          className="mt-6 flex h-11 w-full items-center justify-center rounded-xl bg-[#e58da4] text-sm font-semibold text-white hover:bg-[#d97d96]"
-                        >
-                          Book appointment
-                        </Link>
+                        <div className="mt-6 grid grid-cols-2 gap-3">
+                          <Link
+                            to={`/doctors/${doctor._id}`}
+                            className="flex h-11 items-center justify-center rounded-xl border border-[#eadde1] text-sm font-medium text-[#292331] hover:border-[#e58da4]"
+                          >
+                            View profile
+                          </Link>
+                          <Link
+                            to={`/doctors/${doctor._id}/book`}
+                            className="flex h-11 items-center justify-center rounded-xl bg-[#e58da4] text-sm font-semibold text-white hover:bg-[#d97d96]"
+                          >
+                            Book
+                          </Link>
+                        </div>
                        
                       </div>
                     ))}

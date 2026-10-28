@@ -2,6 +2,7 @@
 // Used by the appointment controller, the payment routes and the background sweeper.
 const Appointment = require("../models/Appointment");
 const razorpay = require("./razorpay");
+const ledger = require("./paymentLedger");
 
 const HOLD_MS = 10 * 60 * 1000; // a slot is held for 10 minutes while the person pays
 
@@ -37,6 +38,7 @@ const issueRefund = async (appointmentId) => {
   );
 
   if (!appointment) return { refunded: false };
+  ledger.logRefund(appointment._id, "refund_processing");
 
   try {
     const refund = await razorpay.refundPayment(appointment.razorpayPaymentId, {
@@ -49,6 +51,7 @@ const issueRefund = async (appointmentId) => {
       { _id: appointment._id },
       { $set: { paymentStatus: "refunded", refundId: refund.id, refundedAt: new Date() } }
     );
+    ledger.logRefund(appointment._id, "refunded", refund.id);
     return { refunded: true };
   } catch (error) {
     // Razorpay says it was already refunded: that is a success
@@ -60,6 +63,7 @@ const issueRefund = async (appointmentId) => {
         { _id: appointment._id },
         { $set: { paymentStatus: "refunded", refundedAt: new Date() } }
       );
+      ledger.logRefund(appointment._id, "refunded");
       return { refunded: true };
     }
 
@@ -68,6 +72,7 @@ const issueRefund = async (appointmentId) => {
       { _id: appointment._id },
       { $set: { paymentStatus: "refund_pending" } }
     );
+    ledger.logRefund(appointment._id, "refund_pending");
     return { refunded: false, error: error.message };
   }
 };
@@ -119,7 +124,10 @@ const finalizePaid = async (appointmentId, paymentId) => {
     },
     { new: true }
   );
-  if (appointment) return { outcome: "booked", appointment };
+  if (appointment) {
+    ledger.logPaid(appointment, paymentId);
+    return { outcome: "booked", appointment };
+  }
 
   appointment = await Appointment.findById(appointmentId);
   if (!appointment) return { outcome: "missing" };
@@ -149,7 +157,10 @@ const finalizePaid = async (appointmentId, paymentId) => {
         },
         { new: true }
       );
-      if (revived) return { outcome: "booked", appointment: revived };
+      if (revived) {
+        ledger.logPaid(revived, paymentId);
+        return { outcome: "booked", appointment: revived };
+      }
     } catch (error) {
       if (error.code !== 11000) throw error; // slot was taken meanwhile: refund below
     }
@@ -172,6 +183,7 @@ const finalizePaid = async (appointmentId, paymentId) => {
     return { outcome: "refunded" };
   }
 
+  ledger.logPaid(appointment, paymentId);
   await issueRefund(appointmentId);
   return { outcome: "refunded" };
 };

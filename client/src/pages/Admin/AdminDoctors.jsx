@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
-import { getDoctorsForReview, reviewDoctor } from "../../services/api";
+import { downloadFile, getDoctorsForReview, openFile, reviewDoctor } from "../../services/api";
+import SecureImage from "../../components/common/SecureImage";
 
 const TABS = [
   ["pending", "Waiting"],
@@ -87,16 +88,42 @@ export default function AdminDoctors() {
       <div className="mt-6 space-y-5">
         {doctors.map((d) => (
           <article key={d._id} className="rounded-3xl bg-white p-6 shadow-[0_12px_40px_rgba(170,95,120,0.08)]">
-            <h2 className="font-semibold text-[#292331]">{d.name}</h2>
-            <p className="text-sm text-[#d77f97]">{d.specialization}</p>
+            <div className="flex items-center gap-4">
+              <SecureImage fileId={d.photo} name={d.name} size={56} />
+              <div>
+                <h2 className="font-semibold text-[#292331]">{d.name}</h2>
+                <p className="text-sm text-[#d77f97]">{d.specialization}</p>
+              </div>
+            </div>
 
             <div className="mt-4 grid grid-cols-2 gap-4 border-t border-[#f2e8eb] pt-4 sm:grid-cols-3">
               <Row label="Email" value={d.user?.email} />
+              <Row label="Phone" value={d.phone} />
+              <Row label="Clinic" value={[d.clinicName, d.clinicAddress].filter(Boolean).join(", ")} />
               <Row label="Qualification" value={d.qualification} />
               <Row label="Experience" value={`${d.experience} years`} />
               <Row label="Fee" value={`₹${Number(d.consultationFee).toLocaleString("en-IN")}`} />
               <Row label="Medical council" value={d.registrationCouncil} />
               <Row label="Registration no." value={d.registrationNumber} />
+            </div>
+
+            <div className="mt-4">
+              <p className="text-xs text-gray-400">Verification documents</p>
+              {(d.documents || []).length === 0 ? (
+                <p className="mt-1 text-sm text-amber-700">No documents uploaded. You can't approve until there is one.</p>
+              ) : (
+                <ul className="mt-1 space-y-1">
+                  {d.documents.map((f) => (
+                    <li key={f._id} className="flex flex-wrap items-center gap-3 text-sm">
+                      <span className="text-gray-700">{f.filename}</span>
+                      <button type="button" onClick={() => openFile(f._id).catch((e) => setError(e.message))}
+                        className="text-xs font-medium text-[#d97d96]">View</button>
+                      <button type="button" onClick={() => downloadFile(f._id, f.filename).catch((e) => setError(e.message))}
+                        className="text-xs text-gray-500">Download</button>
+                    </li>
+                  ))}
+                </ul>
+              )}
             </div>
 
             {d.bio && <p className="mt-4 text-sm text-gray-600">{d.bio}</p>}
@@ -114,7 +141,7 @@ export default function AdminDoctors() {
               />
               <div className="flex gap-3">
                 {status !== "approved" && (
-                  <button type="button" disabled={busyId === d._id} onClick={() => decide(d, "approve")}
+                  <button type="button" disabled={busyId === d._id || (d.documents || []).length === 0} onClick={() => decide(d, "approve")}
                     className="h-10 rounded-xl bg-[#e58da4] px-5 text-sm font-semibold text-white hover:bg-[#d97d96] disabled:opacity-60">
                     Approve
                   </button>

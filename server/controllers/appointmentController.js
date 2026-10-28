@@ -15,6 +15,8 @@ const {
 } = require("../utils/slots");
 const { buildReport } = require("./reportController");
 const razorpay = require("../utils/razorpay");
+const ledger = require("../utils/paymentLedger");
+const { buildPrescriptionPdf } = require("../utils/prescriptionPdf");
 const {
   HOLD_MS,
   expireStaleHolds,
@@ -240,6 +242,7 @@ const bookAppointment = async (req, res) => {
         });
         appointment.razorpayOrderId = order.id;
         await appointment.save();
+        ledger.logOrder(appointment, order);
       } catch (err) {
         console.error("Create order error:", err.message);
         // let go of the slot again
@@ -295,7 +298,7 @@ const getMyAppointments = async (req, res) => {
         .sort({ startsAt: -1 })
         .limit(100)
         .select(
-          "doctor startsAt endsAt status reason fee shareReport reportViewedAt meetingLink cancelledBy paymentStatus amountPaise holdExpiresAt prescription"
+          "doctor startsAt endsAt status reason fee shareReport reportViewedAt meetingLink cancelledBy paymentStatus amountPaise razorpayPaymentId paidAt holdExpiresAt rescheduleCount prescription"
         )
         .populate("doctor", "name specialization")
         .lean(),
@@ -305,7 +308,7 @@ const getMyAppointments = async (req, res) => {
     res.json({
       // the video link is only for confirmed visits, never for unpaid holds
       appointments: appointments.map((a) =>
-        a.status === "booked" ? a : { ...a, meetingLink: undefined }
+        withoutHistory(a.status === "booked" ? a : { ...a, meetingLink: undefined })
       ),
       doctorId: me?.doctorId || null,
       isAdmin: Boolean(me?.isAdmin),
@@ -453,7 +456,7 @@ const saveSchedule = async (req, res) => {
     const schedule = await DoctorSchedule.findOneAndUpdate(
       { doctor: doctorId },
       { $set: value, $setOnInsert: { doctor: doctorId } },
-     { returnDocument: "after", upsert: true, runValidators: true }
+      { new: true, upsert: true, runValidators: true }
     )
       .select("slotMinutes weekly daysOff maxAdvanceDays")
       .lean();
@@ -489,12 +492,12 @@ const getDoctorAppointments = async (req, res) => {
       .sort({ startsAt: upcoming ? 1 : -1 })
       .limit(200)
       .select(
-        "user startsAt endsAt status reason fee shareReport reportViewedAt meetingLink cancelledBy paymentStatus prescription"
+        "user startsAt endsAt status reason fee amountPaise shareReport reportViewedAt meetingLink cancelledBy paymentStatus prescription"
       )
-      .populate("user", "name") // never the patient's email or phone
+      .populate("user", "name age") // never the patient's email or phone
       .lean();
 
-    res.json({ appointments });
+    res.json({ appointments: appointments.map(withoutHistory) });
   } catch (error) {
     console.error("Doctor appointments error:", error);
     res.status(500).json({ message: "Couldn't load appointments" });
@@ -637,7 +640,128 @@ const getSharedReport = async (req, res) => {
   }
 };
 
+// ---------------------------------------------------------------- RESCHEDULE
+
+// PATCH /api/appointments/:id/reschedule  { startsAt }
+// The person moves their own paid or free visit to another free slot of the same doctor.
+// Allowed once, until 2 hours before the visit. No new payment: the fee is the same doctor's.
+const rescheduleAppointment = async (req, res) => {
+  try {
+    if (!isId(req.params.id)) return res.status(400).json({ message: "Invalid appointment" });
+
+    const { startsAt } = req.body || {};
+    if (typeof startsAt !== "string") return res.status(400).json({ message: "Choose a time" });
+    const start = new Date(startsAt);
+    if (Number.isNaN(start.getTime())) return res.status(400).json({ message: "Choose a valid time" });
+
+    const appointment = await Appointment.findOne({ _id: req.params.id, user: req.user }).populate(
+      "doctor",
+      "name user"
+    );
+    if (!appointment) return res.status(404).json({ message: "Appointment not found" });
+
+    if (appointment.status !== "booked") {
+      return res.status(400).json({ message: "Only a confirmed appointment can be moved" });
+    }
+    if (appointment.rescheduleCount >= 1) {
+      return res.status(400).json({
+        message: "This appointment was already moved once. You can cancel it and book again.",
+      });
+    }
+    if (appointment.startsAt.getTime() - Date.now() < CANCEL_BEFORE_MS) {
+      return res.status(400).json({ message: "Moving closes 2 hours before the visit." });
+    }
+    if (start.getTime() === appointment.startsAt.getTime()) {
+      return res.status(400).json({ message: "Please choose a different time." });
+    }
+
+    const doctorId = appointment.doctor._id;
+    const [doctor, schedule] = await Promise.all([
+      Doctor.findOne({ _id: doctorId, available: true, verificationStatus: "approved" }).select("_id").lean(),
+      DoctorSchedule.findOne({ doctor: doctorId }).lean(),
+    ]);
+    if (!doctor || !schedule) {
+      return res.status(404).json({ message: "This doctor can't be booked right now" });
+    }
+
+    // the new time must be one of the doctor's real slots
+    const valid = slotsForDate(schedule, istDateKey(start)).some(
+      (s) => s.startsAt.getTime() === start.getTime()
+    );
+    if (!valid) {
+      return res.status(400).json({ message: "That time isn't available. Please pick another." });
+    }
+
+    await expireStaleHolds({ doctor: doctorId });
+
+    const old = appointment.startsAt;
+    const end = new Date(start.getTime() + schedule.slotMinutes * 60 * 1000);
+
+    let moved;
+    try {
+      // one atomic step: only works if nothing changed since we read it
+      moved = await Appointment.findOneAndUpdate(
+        { _id: appointment._id, user: req.user, status: "booked", rescheduleCount: { $lt: 1 }, startsAt: old },
+        {
+          $set: { startsAt: start, endsAt: end, previousStartsAt: old, rescheduledAt: new Date() },
+          $inc: { rescheduleCount: 1 },
+        },
+        { new: true }
+      );
+    } catch (err) {
+      // the database refuses a double booking
+      if (err.code === 11000) {
+        return res.status(409).json({
+          message: "That time was just taken, or you already have an appointment then. Please pick another.",
+        });
+      }
+      throw err;
+    }
+    if (!moved) {
+      return res.status(409).json({ message: "This appointment just changed. Please refresh and try again." });
+    }
+
+    // tell both people (best effort)
+    const [patient, docOwner] = await Promise.all([
+      User.findById(req.user).select("name email").lean(),
+      appointment.doctor.user ? User.findById(appointment.doctor.user).select("name email").lean() : null,
+    ]);
+    const line = `from ${whenText(old)} to ${whenText(start)}`;
+    if (patient?.email) {
+      notify({
+        to: patient.email,
+        subject: "Your Lunara appointment was moved",
+        text: `Hi ${patient.name},\n\nYour appointment with ${appointment.doctor.name} was moved ${line}.\n\nLunara`,
+        html: `<p>Hi ${esc(patient.name)},</p><p>Your appointment with <strong>${esc(appointment.doctor.name)}</strong> was moved ${esc(line)}.</p><p>Lunara</p>`,
+      });
+    }
+    if (docOwner?.email) {
+      notify({
+        to: docOwner.email,
+        subject: "A Lunara appointment was moved",
+        text: `Hi ${docOwner.name},\n\nA patient moved their appointment ${line}.\n\nLunara`,
+        html: `<p>Hi ${esc(docOwner.name)},</p><p>A patient moved their appointment ${esc(line)}.</p><p>Lunara</p>`,
+      });
+    }
+
+    res.json({
+      message: "Appointment moved",
+      appointment: { _id: moved._id, startsAt: moved.startsAt, endsAt: moved.endsAt },
+    });
+  } catch (error) {
+    console.error("Reschedule error:", error);
+    res.status(500).json({ message: "Couldn't move the appointment" });
+  }
+};
+
 // ---------------------------------------------------------------- PRESCRIPTION
+
+// lists never carry the edit history, only how many earlier versions exist
+const withoutHistory = (a) => {
+  if (!a.prescription) return a;
+  const { revisions = [], ...rest } = a.prescription;
+  return { ...a, prescription: { ...rest, revisionCount: revisions.length } };
+};
 
 const text = (v, max) => (typeof v === "string" ? v.trim() : "").slice(0, max + 1);
 
@@ -685,8 +809,10 @@ const savePrescription = async (req, res) => {
     const appointment = await Appointment.findById(req.params.id).populate("doctor", "name");
     if (!appointment) return res.status(404).json({ message: "Appointment not found" });
 
-    if (!(await canManageDoctor(req.user, appointment.doctor._id))) {
-      return res.status(403).json({ message: "Not allowed" });
+    // only the doctor of this visit can write or change a prescription (admins can't)
+    const author = await User.findById(req.user).select("doctorId").lean();
+    if (!author?.doctorId || String(author.doctorId) !== String(appointment.doctor._id)) {
+      return res.status(403).json({ message: "Only the doctor of this visit can write the prescription" });
     }
     if (!["booked", "completed"].includes(appointment.status)) {
       return res.status(400).json({ message: "A prescription needs a confirmed visit" });
@@ -700,10 +826,28 @@ const savePrescription = async (req, res) => {
 
     const first = !appointment.prescription?.issuedAt;
     const now = new Date();
+
+    // keep the older version so changes can always be traced
+    let revisions = [];
+    if (!first) {
+      const old = appointment.prescription.toObject();
+      revisions = [
+        ...(old.revisions || []),
+        {
+          at: old.updatedAt || old.issuedAt,
+          diagnosis: old.diagnosis,
+          medicines: old.medicines,
+          advice: old.advice,
+          followUp: old.followUp,
+        },
+      ].slice(-20);
+    }
+
     appointment.prescription = {
       ...value,
       issuedAt: appointment.prescription?.issuedAt || now,
       updatedAt: now,
+      revisions,
     };
     await appointment.save();
 
@@ -724,43 +868,78 @@ const savePrescription = async (req, res) => {
       }
     }
 
-    res.json({ message: "Prescription saved", prescription: appointment.prescription });
+    const { revisions: _history, ...visible } = appointment.prescription.toObject();
+    res.json({ message: "Prescription saved", prescription: { ...visible, revisionCount: _history.length } });
   } catch (error) {
     console.error("Save prescription error:", error);
     res.status(500).json({ message: "Couldn't save the prescription" });
   }
 };
 
-// GET /api/appointments/:id/prescription  (the patient, that doctor, or an admin)
+// Loads a prescription for the patient or the doctor of that visit. Admins can't read it.
+// Returns { error: { status, message } } or { data, isDoctor }.
+const loadPrescription = async (appointmentId, userId) => {
+  if (!isId(appointmentId)) return { error: { status: 400, message: "Invalid appointment" } };
+
+  const appointment = await Appointment.findById(appointmentId)
+    .populate("doctor", "name specialization qualification registrationNumber registrationCouncil")
+    .populate("user", "name age")
+    .lean();
+  if (!appointment || !appointment.prescription?.issuedAt) {
+    return { error: { status: 404, message: "No prescription for this appointment" } };
+  }
+
+  const me = await User.findById(userId).select("doctorId").lean();
+  const isPatient = String(appointment.user._id) === String(userId);
+  const isDoctor = Boolean(me?.doctorId) && String(me.doctorId) === String(appointment.doctor._id);
+  if (!isPatient && !isDoctor) {
+    // 404, so nobody can probe which appointments have prescriptions
+    return { error: { status: 404, message: "No prescription for this appointment" } };
+  }
+
+  const { revisions = [], ...current } = appointment.prescription;
+  return {
+    isDoctor,
+    data: {
+      ...current,
+      revisionCount: revisions.length,
+      ...(isDoctor ? { revisions } : {}), // the patient never sees earlier drafts
+      appointmentId: appointment._id,
+      visitAt: appointment.startsAt,
+      doctor: appointment.doctor,
+      patient: { name: appointment.user.name, age: appointment.user.age },
+    },
+  };
+};
+
+// GET /api/appointments/:id/prescription
 const getPrescription = async (req, res) => {
   try {
-    if (!isId(req.params.id)) return res.status(400).json({ message: "Invalid appointment" });
-
-    const appointment = await Appointment.findById(req.params.id)
-      .populate("doctor", "name specialization qualification registrationNumber registrationCouncil")
-      .populate("user", "name age")
-      .lean();
-    if (!appointment || !appointment.prescription?.issuedAt) {
-      return res.status(404).json({ message: "No prescription for this appointment" });
-    }
-
-    const isPatient = String(appointment.user._id) === String(req.user);
-    if (!isPatient && !(await canManageDoctor(req.user, appointment.doctor._id))) {
-      return res.status(403).json({ message: "Not allowed" });
-    }
-
-    res.json({
-      prescription: {
-        ...appointment.prescription,
-        appointmentId: appointment._id,
-        visitAt: appointment.startsAt,
-        doctor: appointment.doctor,
-        patient: { name: appointment.user.name, age: appointment.user.age },
-      },
-    });
+    const result = await loadPrescription(req.params.id, req.user);
+    if (result.error) return res.status(result.error.status).json({ message: result.error.message });
+    res.json({ prescription: result.data });
   } catch (error) {
     console.error("Get prescription error:", error);
     res.status(500).json({ message: "Couldn't load the prescription" });
+  }
+};
+
+// GET /api/appointments/:id/prescription/pdf
+const getPrescriptionPdf = async (req, res) => {
+  try {
+    const result = await loadPrescription(req.params.id, req.user);
+    if (result.error) return res.status(result.error.status).json({ message: result.error.message });
+
+    res.set({
+      "Content-Type": "application/pdf",
+      "Content-Disposition": 'attachment; filename="lunara-prescription.pdf"',
+      "Cache-Control": "private, no-store",
+      "X-Content-Type-Options": "nosniff",
+    });
+    buildPrescriptionPdf(result.data).pipe(res);
+  } catch (error) {
+    console.error("Prescription PDF error:", error);
+    if (!res.headersSent) res.status(500).json({ message: "Couldn't create the PDF" });
   }
 };
 
@@ -775,7 +954,9 @@ module.exports = {
   getDoctorAppointments,
   updateByDoctor,
   getSharedReport,
+  rescheduleAppointment,
   savePrescription,
   getPrescription,
+  getPrescriptionPdf,
   IST_OFFSET_MS, // exported for tests
 };

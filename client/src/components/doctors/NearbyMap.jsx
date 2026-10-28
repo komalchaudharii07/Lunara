@@ -7,6 +7,9 @@ import {
   useMap,
 } from "react-leaflet";
 import L from "leaflet";
+import { Link } from "react-router-dom";
+import { getNearbyDoctors } from "../../services/api";
+import SecureImage from "../common/SecureImage";
 import "leaflet/dist/leaflet.css";
 
 import markerIcon from "leaflet/dist/images/marker-icon.png";
@@ -46,6 +49,30 @@ const healthcareIcon = new L.DivIcon({
   popupAnchor: [0, -18],
 });
 
+// doctors registered on Lunara (can be booked)
+const lunaraIcon = new L.DivIcon({
+  className: "",
+  html: `
+    <div style="
+      width:38px;
+      height:38px;
+      border-radius:50%;
+      background:#292331;
+      border:3px solid #e58da4;
+      box-shadow:0 3px 12px rgba(41,35,49,0.35);
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      font-size:18px;
+    ">
+      👩‍⚕️
+    </div>
+  `,
+  iconSize: [38, 38],
+  iconAnchor: [19, 19],
+  popupAnchor: [0, -20],
+});
+
 // OpenStreetMap data can be edited by anyone, so only allow real web links
 const safeUrl = (value) => {
   if (!value) return "";
@@ -71,9 +98,25 @@ function LocationUpdater({ location, zoom = 12 }) {
   return null;
 }
 
+// zooms the map to show every Lunara doctor until the person picks a place
+function FitDoctors({ doctors, enabled }) {
+  const map = useMap();
+
+  useEffect(() => {
+    if (!enabled || doctors.length === 0) return;
+    map.fitBounds(
+      doctors.map((d) => [d.lat, d.lng]),
+      { padding: [80, 80], maxZoom: 13 }
+    );
+  }, [doctors, enabled, map]);
+
+  return null;
+}
+
 export default function NearbyMap({ careType }) {
   const [location, setLocation] = useState(null);
   const [places, setPlaces] = useState([]);
+  const [lunaraDoctors, setLunaraDoctors] = useState([]);
 
   const [locationInput, setLocationInput] = useState("");
   const [searchingLocation, setSearchingLocation] =
@@ -86,6 +129,21 @@ export default function NearbyMap({ careType }) {
   const [radius, setRadius] = useState(null);
   const [error, setError] = useState("");
   const requestId = useRef(0);
+
+  // doctors registered on Lunara: all of them when the map opens, nearby ones once a place is chosen
+  useEffect(() => {
+    let cancelled = false;
+    getNearbyDoctors(location ? { lat: location[0], lng: location[1], km: 25 } : {})
+      .then((data) => {
+        if (!cancelled) setLunaraDoctors(data.doctors || []);
+      })
+      .catch(() => {
+        if (!cancelled) setLunaraDoctors([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [location]);
 
   const getHealthcareQuery = () => {
     if (careType === "pcos") {
@@ -326,6 +384,15 @@ export default function NearbyMap({ careType }) {
     );
   };
 
+  // ask for the person's location as soon as the map opens (once)
+  const askedLocation = useRef(false);
+  useEffect(() => {
+    if (askedLocation.current) return;
+    askedLocation.current = true;
+    getLocation();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // SEARCH CITY / AREA / LANDMARK / PINCODE
   const searchLocation = async () => {
     const query = locationInput.trim();
@@ -413,6 +480,8 @@ export default function NearbyMap({ careType }) {
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
         />
 
+        <FitDoctors doctors={lunaraDoctors} enabled={!location} />
+
         {location && (
           <>
             <LocationUpdater location={location} />
@@ -435,6 +504,51 @@ export default function NearbyMap({ careType }) {
             </Marker>
           </>
         )}
+
+        {lunaraDoctors.map((doc) => (
+          <Marker key={`lunara-${doc._id}`} position={[doc.lat, doc.lng]} icon={lunaraIcon}>
+            <Popup>
+              <div className="min-w-57.5">
+                <div className="flex items-center gap-3">
+                  <SecureImage fileId={doc.photo} name={doc.name} size={48} />
+                  <div>
+                    <p className="text-sm font-semibold text-[#292331]">{doc.name}</p>
+                    <p className="mt-0.5 text-xs text-[#d77f97]">{doc.specialization}</p>
+                    <span className="mt-1 inline-block rounded-full bg-green-50 px-2 py-0.5 text-[10px] font-medium text-green-600">
+                      Accepting bookings
+                    </span>
+                  </div>
+                </div>
+                <p className="mt-2 text-xs text-gray-500">
+                  {doc.experience != null ? `${doc.experience} years experience` : ""}
+                </p>
+                {doc.clinicName && (
+                  <p className="mt-2 text-xs text-gray-500">🏥 {doc.clinicName}</p>
+                )}
+                {doc.clinicAddress && (
+                  <p className="mt-1 text-xs leading-5 text-gray-500">📍 {doc.clinicAddress}</p>
+                )}
+                <p className="mt-1 text-xs text-gray-500">
+                  {doc.distanceKm != null ? `${doc.distanceKm} km away · ` : ""}₹{Number(doc.consultationFee).toLocaleString("en-IN")}
+                </p>
+                <div className="mt-3 grid grid-cols-2 gap-2">
+                  <Link
+                    to={`/doctors/${doc._id}`}
+                    className="block rounded-lg border border-[#eadde1] px-3 py-2 text-center text-xs font-medium text-[#292331]"
+                  >
+                    View profile
+                  </Link>
+                  <Link
+                    to={`/doctors/${doc._id}/book`}
+                    className="block rounded-lg bg-[#e58da4] px-3 py-2 text-center text-xs font-semibold text-white"
+                  >
+                    Book
+                  </Link>
+                </div>
+              </div>
+            </Popup>
+          </Marker>
+        ))}
 
         {places.map((place) => (
           <Marker
@@ -535,6 +649,12 @@ export default function NearbyMap({ careType }) {
         >
           📍 Use my current location
         </button>
+
+        {lunaraDoctors.length > 0 && (
+          <p className="mt-2 text-xs font-medium text-[#292331]">
+            👩‍⚕️ {lunaraDoctors.length} Lunara doctor{lunaraDoctors.length === 1 ? "" : "s"}{location ? " near you" : " on the map"}. Tap a dark pin to book.
+          </p>
+        )}
 
         {placesLoading && (
           <p className="mt-2 text-xs text-gray-400">

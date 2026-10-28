@@ -7,12 +7,22 @@ import {
   getMyAppointments,
   getMyDoctorProfile,
   updateMyDoctorProfile,
+  uploadDoctorDocuments,
+  uploadDoctorPhoto,
+  removeDoctorDocument,
+  resubmitDoctor,
+  openFile,
+  downloadFile,
+  uploadMedicalReport,
+  getAppointmentReports,
+  deleteMedicalReport,
   getSharedReport,
   saveDoctorSchedule,
   savePrescription,
   updateAppointmentByDoctor,
 } from "../../services/api";
-import ReportView from "../../components/report/ReportView";
+import ReportView from "../Reports/ReportView";
+import SecureImage from "../../components/common/SecureImage";
 import { formatDateTime } from "../../utils/dates";
 
 const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
@@ -26,6 +36,133 @@ const statusStyle = {
 
 const input =
   "h-10 rounded-lg border border-[#eadde1] bg-white px-2 text-sm text-[#292331] outline-none focus:border-[#e58da4]";
+
+// ------------------------------------------------------------ medical reports
+
+const payLabel = (a) => {
+  const rupees = a.amountPaise ? `₹${(a.amountPaise / 100).toLocaleString("en-IN")}` : "";
+  switch (a.paymentStatus) {
+    case "paid":
+      return { text: `Paid ${rupees}`.trim(), cls: "text-green-600" };
+    case "refunded":
+    case "refund_processing":
+    case "refund_pending":
+      return { text: `Refunded ${rupees}`.trim(), cls: "text-gray-500" };
+    case "pending":
+      return { text: "Payment pending", cls: "text-amber-600" };
+    default:
+      return { text: "No online payment", cls: "text-gray-400" };
+  }
+};
+
+function ReportsBox({ appointment }) {
+  const [reports, setReports] = useState(null);
+  const [title, setTitle] = useState("");
+  const [notes, setNotes] = useState("");
+  const [file, setFile] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [note, setNote] = useState("");
+
+  const load = useCallback(async () => {
+    try {
+      const data = await getAppointmentReports(appointment._id);
+      setReports(data.reports || []);
+    } catch (err) {
+      setError(err.message);
+    }
+  }, [appointment._id]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const pick = (e) => {
+    const f = e.target.files[0];
+    if (!f) return setFile(null);
+    if (!["application/pdf", "image/jpeg", "image/png"].includes(f.type)) {
+      e.target.value = "";
+      return setError("The report must be a PDF, JPG or PNG.");
+    }
+    if (f.size > 5 * 1024 * 1024) {
+      e.target.value = "";
+      return setError("The report must be 5 MB or smaller.");
+    }
+    setError("");
+    setFile(f);
+  };
+
+  const submit = async (e) => {
+    e.preventDefault();
+    if (!file) return setError("Choose a file first.");
+    setBusy(true);
+    setError("");
+    setNote("");
+    try {
+      await uploadMedicalReport({ appointmentId: appointment._id, title: title.trim(), notes: notes.trim(), file });
+      setTitle("");
+      setNotes("");
+      setFile(null);
+      e.target.reset();
+      setNote("Report uploaded. The patient can see it now.");
+      await load();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const remove = async (id) => {
+    if (!window.confirm("Remove this report? The patient will no longer see it.")) return;
+    setError("");
+    try {
+      await deleteMedicalReport(id);
+      await load();
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  return (
+    <div className="mt-4 rounded-2xl bg-[#fdf7f8] p-4">
+      <p className="text-sm font-medium text-[#292331]">Medical reports</p>
+
+      {reports && reports.length === 0 && <p className="mt-2 text-xs text-gray-500">No reports added yet.</p>}
+      {reports && reports.length > 0 && (
+        <ul className="mt-2 space-y-2">
+          {reports.map((r) => (
+            <li key={r._id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-white px-3 py-2 text-sm">
+              <span className="min-w-0 truncate text-gray-700">{r.title}</span>
+              <span className="flex shrink-0 gap-3 text-xs">
+                <button type="button" onClick={() => openFile(r.file._id).catch((err) => setError(err.message))}
+                  className="font-medium text-[#d97d96]">View</button>
+                <button type="button" onClick={() => downloadFile(r.file._id, r.file.filename).catch((err) => setError(err.message))}
+                  className="text-gray-500">Download</button>
+                <button type="button" onClick={() => remove(r._id)} className="text-gray-500 hover:text-red-500">Remove</button>
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <form onSubmit={submit} className="mt-3 space-y-2">
+        <input required minLength={2} maxLength={100} value={title} onChange={(e) => setTitle(e.target.value)}
+          placeholder="Report title (e.g. Blood test results)" className={`${input} w-full`} />
+        <input maxLength={500} value={notes} onChange={(e) => setNotes(e.target.value)}
+          placeholder="Note for the patient (optional)" className={`${input} w-full`} />
+        <input type="file" accept=".pdf,.jpg,.jpeg,.png" onChange={pick} className="block text-xs text-gray-500" />
+        <button type="submit" disabled={busy || !file}
+          className="h-9 rounded-lg bg-[#e58da4] px-4 text-xs font-semibold text-white hover:bg-[#d97d96] disabled:opacity-50">
+          {busy ? "Uploading..." : "Upload report"}
+        </button>
+      </form>
+
+      {note && <p role="status" className="mt-2 text-xs text-green-600">{note}</p>}
+      {error && <p role="alert" className="mt-2 text-xs text-red-500">{error}</p>}
+    </div>
+  );
+}
 
 // ------------------------------------------------------------ prescription
 
@@ -139,6 +276,8 @@ function AppointmentCard({ a, onChanged }) {
   const [report, setReport] = useState(null);
   const [reportLoading, setReportLoading] = useState(false);
   const [rxOpen, setRxOpen] = useState(false);
+  const [rpOpen, setRpOpen] = useState(false);
+  const pay = payLabel(a);
 
   const active = a.status === "booked";
   const started = new Date(a.startsAt).getTime() <= Date.now();
@@ -176,7 +315,10 @@ function AppointmentCard({ a, onChanged }) {
     <div className="rounded-3xl bg-white p-5 shadow-[0_12px_40px_rgba(170,95,120,0.08)]">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h3 className="font-semibold text-[#292331]">{a.user?.name || "Patient"}</h3>
+          <h3 className="font-semibold text-[#292331]">
+            {a.user?.name || "Patient"}
+            {a.user?.age ? <span className="ml-2 text-sm font-normal text-gray-400">{a.user.age} yrs</span> : null}
+          </h3>
           <p className="mt-1 text-sm text-gray-500">{formatDateTime(a.startsAt)}</p>
         </div>
 
@@ -186,6 +328,9 @@ function AppointmentCard({ a, onChanged }) {
       </div>
 
       {a.reason && <p className="mt-3 text-sm text-gray-500">“{a.reason}”</p>}
+      {a.status !== "cancelled" || a.paymentStatus !== "not_required" ? (
+        <p className={`mt-2 text-xs ${pay.cls}`}>{pay.text}</p>
+      ) : null}
 
       {a.status !== "cancelled" && (
         <div className="mt-4">
@@ -214,6 +359,15 @@ function AppointmentCard({ a, onChanged }) {
             {rxOpen ? "Close prescription" : a.prescription?.issuedAt ? "Edit prescription" : "Write prescription"}
           </button>
           {rxOpen && <PrescriptionForm appointment={a} onSaved={onChanged} />}
+
+          <button
+            type="button"
+            onClick={() => setRpOpen((v) => !v)}
+            className="ml-2 rounded-lg border border-[#eadde1] px-3 py-2 text-xs font-medium text-[#292331] hover:border-[#e58da4]"
+          >
+            {rpOpen ? "Close reports" : "Medical reports"}
+          </button>
+          {rpOpen && <ReportsBox appointment={a} />}
         </div>
       )}
 
@@ -619,6 +773,110 @@ function StatusBanner({ profile }) {
   );
 }
 
+function DoctorFiles({ profile, onSaved }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [note, setNote] = useState("");
+
+  const locked = profile.verificationStatus === "approved";
+
+  const run = async (fn, success) => {
+    setBusy(true);
+    setError("");
+    setNote("");
+    try {
+      const data = await fn();
+      if (data?.doctor) onSaved(data.doctor);
+      setNote(success);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const chooseDocs = (e) => {
+    const list = [...e.target.files];
+    e.target.value = "";
+    if (list.length === 0) return;
+    if (list.length + (profile.documents?.length || 0) > 5) return setError("You can keep up to 5 documents.");
+    if (list.length > 3) return setError("Choose up to 3 files at a time.");
+    if (list.some((f) => f.size > 5 * 1024 * 1024)) return setError("Each document must be 5 MB or smaller.");
+    run(() => uploadDoctorDocuments(list), "Documents uploaded.");
+  };
+
+  const choosePhoto = (e) => {
+    const f = e.target.files[0];
+    e.target.value = "";
+    if (!f) return;
+    if (!["image/jpeg", "image/png"].includes(f.type)) return setError("The photo must be a JPG or PNG.");
+    if (f.size > 2 * 1024 * 1024) return setError("The photo must be 2 MB or smaller.");
+    run(() => uploadDoctorPhoto(f), "Photo saved.");
+  };
+
+  return (
+    <div className="space-y-5 rounded-3xl bg-white p-6 shadow-[0_12px_40px_rgba(170,95,120,0.08)]">
+      <div className="flex items-center gap-4">
+        <SecureImage fileId={profile.photo} name={profile.name} size={72} />
+        <label className="text-sm text-gray-600">
+          Profile photo
+          <input type="file" accept=".jpg,.jpeg,.png" disabled={busy} onChange={choosePhoto}
+            className="mt-1 block text-xs text-gray-500" />
+        </label>
+      </div>
+
+      <div>
+        <p className="text-sm font-medium text-[#292331]">Verification documents</p>
+        <p className="mt-1 text-xs text-gray-500">
+          Only you and the Lunara team can see these. Patients never can.
+        </p>
+
+        {(profile.documents || []).length === 0 ? (
+          <p className="mt-3 rounded-xl bg-amber-50 px-3 py-2 text-xs text-amber-700">
+            No document yet. Upload your medical registration certificate so an admin can verify you.
+          </p>
+        ) : (
+          <ul className="mt-3 space-y-2">
+            {profile.documents.map((d) => (
+              <li key={d._id} className="flex items-center justify-between gap-3 rounded-xl border border-[#f2e8eb] px-3 py-2 text-sm">
+                <span className="min-w-0 truncate text-gray-700">{d.filename}</span>
+                <span className="flex shrink-0 gap-3 text-xs">
+                  <button type="button" onClick={() => openFile(d._id).catch((err) => setError(err.message))}
+                    className="font-medium text-[#d97d96]">View</button>
+                  {!locked && (
+                    <button type="button" disabled={busy}
+                      onClick={() => run(() => removeDoctorDocument(d._id), "Document removed.")}
+                      className="text-gray-500 hover:text-red-500">Remove</button>
+                  )}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+
+        {!locked && (
+          <label className="mt-3 block text-xs text-gray-500">
+            Add documents (PDF, JPG or PNG, 5 MB each)
+            <input type="file" multiple accept=".pdf,.jpg,.jpeg,.png" disabled={busy} onChange={chooseDocs}
+              className="mt-1 block text-xs text-gray-500" />
+          </label>
+        )}
+
+        {profile.verificationStatus === "rejected" && (
+          <button type="button" disabled={busy || !(profile.documents || []).length}
+            onClick={() => run(resubmitDoctor, "Sent for review again.")}
+            className="mt-4 h-10 rounded-xl bg-[#e58da4] px-5 text-sm font-semibold text-white hover:bg-[#d97d96] disabled:opacity-50">
+            Send for review again
+          </button>
+        )}
+      </div>
+
+      {note && <p role="status" className="text-xs text-green-600">{note}</p>}
+      {error && <p role="alert" className="text-xs text-red-500">{error}</p>}
+    </div>
+  );
+}
+
 function ProfileTab({ profile, onSaved }) {
   const [form, setForm] = useState({
     name: profile.name || "",
@@ -627,14 +885,65 @@ function ProfileTab({ profile, onSaved }) {
     experience: String(profile.experience ?? ""),
     consultationFee: String(profile.consultationFee ?? ""),
     bio: profile.bio || "",
+    phone: profile.phone || "",
     available: Boolean(profile.available),
+    clinicName: profile.clinicName || "",
+    clinicAddress: profile.clinicAddress || "",
+    lat: profile.lat ?? "",
+    lng: profile.lng ?? "",
   });
+  const [locating, setLocating] = useState(false);
   const [saving, setSaving] = useState(false);
   const [note, setNote] = useState("");
   const [error, setError] = useState("");
 
   const set = (key) => (e) => setForm((f) => ({ ...f, [key]: e.target.value }));
   const approved = profile.verificationStatus === "approved";
+
+  const useMyLocation = () => {
+    if (!navigator.geolocation) return setError("Your browser can't share its location.");
+    setLocating(true);
+    setError("");
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setForm((f) => ({
+          ...f,
+          lat: Math.round(pos.coords.latitude * 1e6) / 1e6,
+          lng: Math.round(pos.coords.longitude * 1e6) / 1e6,
+        }));
+        setLocating(false);
+      },
+      () => {
+        setError("Couldn't get your location. Allow location access, or find it from the address.");
+        setLocating(false);
+      },
+      { timeout: 10000 }
+    );
+  };
+
+  // finds the map point for the typed address (OpenStreetMap)
+  const findFromAddress = async () => {
+    const q = form.clinicAddress.trim();
+    if (!q) return setError("Type the clinic address first.");
+    setLocating(true);
+    setError("");
+    try {
+      const res = await fetch(
+        `https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=in&q=${encodeURIComponent(q)}`
+      );
+      const rows = await res.json();
+      if (!rows?.[0]) throw new Error("We couldn't find that address on the map. Add the area or pincode.");
+      setForm((f) => ({
+        ...f,
+        lat: Math.round(Number(rows[0].lat) * 1e6) / 1e6,
+        lng: Math.round(Number(rows[0].lon) * 1e6) / 1e6,
+      }));
+    } catch (err) {
+      setError(err.message || "The map search isn't working right now.");
+    } finally {
+      setLocating(false);
+    }
+  };
 
   const save = async (e) => {
     e.preventDefault();
@@ -649,6 +958,11 @@ function ProfileTab({ profile, onSaved }) {
         experience: Number(form.experience),
         consultationFee: Number(form.consultationFee),
         bio: form.bio.trim(),
+        phone: form.phone.trim(),
+        clinicName: form.clinicName.trim(),
+        clinicAddress: form.clinicAddress.trim(),
+        lat: form.lat === "" ? null : Number(form.lat),
+        lng: form.lng === "" ? null : Number(form.lng),
         ...(approved ? { available: form.available } : {}),
       });
       onSaved(data.doctor);
@@ -663,6 +977,8 @@ function ProfileTab({ profile, onSaved }) {
   const wide = `${input} w-full`;
 
   return (
+    <div className="space-y-5">
+    <DoctorFiles profile={profile} onSaved={onSaved} />
     <form onSubmit={save} className="space-y-4 rounded-3xl bg-white p-6 shadow-[0_12px_40px_rgba(170,95,120,0.08)]">
       <div className="grid gap-4 sm:grid-cols-2">
         <label className="text-sm text-gray-600">Name
@@ -670,6 +986,9 @@ function ProfileTab({ profile, onSaved }) {
         </label>
         <label className="text-sm text-gray-600">Specialization
           <input required maxLength={100} value={form.specialization} onChange={set("specialization")} className={`${wide} mt-1`} />
+        </label>
+        <label className="text-sm text-gray-600 sm:col-span-2">Phone (only the Lunara team sees this)
+          <input required type="tel" maxLength={20} value={form.phone} onChange={set("phone")} className={`${wide} mt-1`} />
         </label>
         <label className="text-sm text-gray-600 sm:col-span-2">Qualification
           <input required maxLength={200} value={form.qualification} onChange={set("qualification")} className={`${wide} mt-1`} />
@@ -686,6 +1005,32 @@ function ProfileTab({ profile, onSaved }) {
         <textarea rows={3} maxLength={600} value={form.bio} onChange={set("bio")}
           className="mt-1 w-full rounded-lg border border-[#eadde1] bg-white px-2 py-2 text-sm outline-none focus:border-[#e58da4]" />
       </label>
+
+      <div className="space-y-3 rounded-2xl bg-[#fdf7f8] p-4">
+        <p className="text-sm font-medium text-[#292331]">Clinic on the map</p>
+        <p className="text-xs text-gray-500">
+          Patients near you will see a pin with a Book button. Your location is required.
+        </p>
+        <input aria-label="Clinic name" placeholder="Clinic or hospital name" maxLength={120}
+          value={form.clinicName} onChange={set("clinicName")} className={wide} />
+        <input aria-label="Clinic address" placeholder="Address, area, city, pincode" maxLength={250}
+          value={form.clinicAddress} onChange={set("clinicAddress")} className={wide} />
+        <div className="flex flex-wrap items-center gap-3">
+          <button type="button" onClick={findFromAddress} disabled={locating}
+            className="rounded-lg border border-[#eadde1] bg-white px-3 py-2 text-xs font-medium text-[#292331] hover:border-[#e58da4] disabled:opacity-50">
+            Find on map from address
+          </button>
+          <button type="button" onClick={useMyLocation} disabled={locating}
+            className="rounded-lg border border-[#eadde1] bg-white px-3 py-2 text-xs font-medium text-[#292331] hover:border-[#e58da4] disabled:opacity-50">
+            Use my current location
+          </button>
+          {form.lat !== "" && form.lng !== "" ? (
+            <span className="text-xs text-green-600">Pin set ({form.lat}, {form.lng})</span>
+          ) : (
+            <span className="text-xs text-gray-400">No pin yet</span>
+          )}
+        </div>
+      </div>
 
       <p className="text-xs text-gray-400">
         Registration: {profile.registrationCouncil || "—"} · {profile.registrationNumber || "—"} (can&apos;t be changed here)
@@ -706,6 +1051,7 @@ function ProfileTab({ profile, onSaved }) {
         {saving ? "Saving..." : "Save profile"}
       </button>
     </form>
+    </div>
   );
 }
 

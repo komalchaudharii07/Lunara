@@ -8,6 +8,7 @@ const {
   paymentParams,
 } = require("../utils/payments");
 const { sendBookedEmail } = require("../utils/appointmentEmails");
+const ledger = require("../utils/paymentLedger");
 
 // one confirmation email, whichever of the browser or the webhook gets there first
 const emailIfBooked = (result) => {
@@ -74,7 +75,16 @@ const verifyPayment = async (req, res) => {
       });
     }
 
-    res.json({ status: "booked", appointmentId });
+    res.json({
+      status: "booked",
+      appointmentId,
+      // shown on the confirmation screen
+      receipt: {
+        paymentId,
+        amountPaise: result.appointment?.amountPaise,
+        paidAt: result.appointment?.paidAt,
+      },
+    });
   } catch (error) {
     console.error("Verify payment error:", error);
     res.status(500).json({
@@ -146,6 +156,14 @@ const handleWebhook = async (req, res) => {
         if (appointment) {
           emailIfBooked(await finalizePaid(appointment._id, payment.id));
         }
+      }
+    }
+
+    // a failed attempt is only recorded; the person can try again inside the payment window
+    if (event.event === "payment.failed") {
+      const failed = event.payload?.payment?.entity;
+      if (typeof failed?.order_id === "string") {
+        ledger.logFailed(failed.order_id, failed.id, failed.error_description || failed.error_reason);
       }
     }
 
